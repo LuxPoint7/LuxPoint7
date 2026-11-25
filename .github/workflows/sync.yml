@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 */6 * * *"   # cada 6 horas (hora UTC)
   workflow_dispatch:         # botón manual en la pestaña Actions
+    inputs:
+      rehacer_fotos:
+        description: "Volver a emparejar todas las fotos de Perfumería 1.1"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths-ignore:
@@ -35,6 +40,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Sincronizar inventario
         run: node scripts/sync-proveedores.js
+        env:
+          REHACER_FOTOS: ${{ inputs.rehacer_fotos }}
       - name: Guardar products.json y fotos nuevas
         run: |
           mkdir -p img/perfumes

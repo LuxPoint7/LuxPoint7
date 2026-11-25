@@ -7,6 +7,7 @@
  *   node scripts/sync-proveedores.js --dry      -> muestra el resumen sin escribir nada
  *   node scripts/sync-proveedores.js --only=orig  (p11 | orig | iphone | tech)
  *   node scripts/sync-proveedores.js --debug    -> guarda el HTML crudo en /tmp para revisar selectores
+ *   node scripts/sync-proveedores.js --rehacer-fotos -> vuelve a emparejar TODAS las fotos 1.1 con las reglas actuales (ignora el cache de img/perfumes)
  *   node scripts/sync-proveedores.js --no-browser -> Casa Phone sin Playwright (solo HTML estatico)
  *
  * SEGURIDAD
@@ -36,6 +37,7 @@ const URLS = {
 const argv = process.argv.slice(2);
 const DRY = argv.includes('--dry');
 const DEBUG = argv.includes('--debug');
+const REHACER_FOTOS = argv.includes('--rehacer-fotos') || process.env.REHACER_FOTOS === 'true';
 const NO_BROWSER = argv.includes('--no-browser') || !!process.env.SYNC_NO_BROWSER;
 const ONLY = (argv.find((a) => a.startsWith('--only=')) || '').split('=')[1];
 
@@ -192,11 +194,26 @@ const FOTO_URLS = {
   perfumesarabes: process.env.URL_FOTOS_PERFUMESARABES || 'https://perfumesarabescolombia.com',
   valmara: process.env.URL_FOTOS_VALMARA || 'https://valmara.co',
 };
-const STOP_FOTO = new Set(('perfume perfumes eau de du la le el parfum parfume toilette extrait edp edt cologne ml oz spray vaporizador caja estuche sencilla lujo cilindro lata cofre ' +
-  'para hombre hombres mujer mujeres men women man woman unisex for by pour femme homme dama caballero original 100ml 100 1 11').split(' '));
-const DISTINTIVAS = new Set('elixir intense intenso extreme extremo absolu absolute noir sport night nuit rouge prive black gold oud legend ultra max mini set kit combo duo'.split(' '));
+const FEM = new Set('dama damas mujer mujeres femme femenino femenina feminine woman women girl girls her lady ladies elle she'.split(' '));
+const MAS = new Set('hombre hombres homme man men boy boys him masculino masculina caballero male lui'.split(' '));
+const STOP_FOTO = new Set(('perfume perfumes eau de du la le el toilette edp edt ml oz spray vaporizador caja estuche sencilla lujo cilindro lata cofre ' +
+  'para unisex for by pour original the nuevo new fragancia fragrance aroma 100ml 100 1 11').split(' '));
+// Palabras que definen una VARIANTE/flanker: deben coincidir exactamente entre el perfume 1.1 y la foto candidata.
+const VARIANTES = new Set(('flame elixir intense intenso intensa parfum parfume extrait cologne absolu absolute extreme extremo rose black gold oud sport fraiche ' +
+  'prive royal leau legend ultra max mini noir nuit night dark blue red white silver pink rouge supreme sublime set kit combo duo').split(' '));
 const EXCLUIR_FOTO = /\b(tester|decant|muestra|miniatura|travel|set|kit|combo|duo|cofre|estuche|body|crema|splash|mist|shampoo|deo|desodorante)\b/i;
-const tokensFoto = (s) => slug(s).split('-').filter(Boolean);
+/** Normaliza un nombre: "L'Eau" -> leau; quita "Eau de Parfum/Toilette" (EDP/EDT) pero deja "Parfum" suelto (flanker). */
+const normFoto = (s) => String(s).toLowerCase().replace(/l['’´`]?\s?eau\b/g, 'leau').replace(/\b(leau|eau)\s+de\s+(parfum|parfume|toilette)\b/g, (m, a) => (a === 'leau' ? 'leau' : ' '));
+const tokensFoto = (s) => slug(normFoto(s)).split('-').filter(Boolean);
+const esNum = (x) => /^\d+(ml|oz)?$/.test(x);
+/** Genero explicito en un conjunto de palabras: { f, m, u } */
+const generoDe = (t) => { const a = [...t]; return { f: a.some((x) => FEM.has(x)), m: a.some((x) => MAS.has(x)), u: a.includes('unisex') }; };
+/** Regla estricta: mujer solo con foto explicitamente femenina; hombre solo con explicitamente masculina; unisex nunca con foto de un solo genero. */
+function generoCompatible(gp, g) {
+  if (gp === 'mujer') return g.f && !g.m;
+  if (gp === 'hombre') return g.m && !g.f;
+  return g.u || g.f === g.m;
+}
 const mlDe = (s) => { const m = slug(s).match(/(?:^|-)(\d{2,3})-?ml(?:-|$)/); return m ? Number(m[1]) : null; };
 
 /** Crea un candidato {t, img, ml, inStock, strict} a partir de un titulo; el titulo se descarta despues. */
@@ -205,21 +222,35 @@ function candidatoFoto(titulo, img, extra = {}) {
   if (!im || EXCLUIR_FOTO.test(String(titulo).replace(/[-_]/g, ' '))) return null;
   const ml = mlDe(titulo);
   if (extra.strict && ml && (ml < 90 || ml > 110)) return null; // no usar la foto de un frasco de otro tamano
-  return { t: new Set(tokensFoto(titulo)), img: im, ml, inStock: true, ...extra };
+  const t = new Set(tokensFoto(titulo));
+  return { t, g: generoDe(t), img: im, ml, inStock: true, ...extra };
 }
 
-/** Mejor candidato para un perfume (marca + nombre contenidos, sin versiones distintas). */
+/**
+ * Mejor candidato para un perfume 1.1. Reglas estrictas:
+ *  - marca y todas las palabras del nombre deben estar en el candidato;
+ *  - GENERO: mujer solo con foto explicitamente femenina, hombre solo con explicitamente masculina;
+ *  - VARIANTES (flame, elixir, intense, parfum, absolu, extreme, rose, black, gold, oud, sport, fraiche, prive, royal, l'eau...):
+ *    el conjunto debe ser IDENTICO en el perfume y en la foto;
+ *  - el candidato no puede traer palabras sobrantes (otra linea del perfume).
+ */
 function matchFoto(p, cands) {
   const brandT = tokensFoto(p.brand);
-  const nameT = tokensFoto(p.name).filter((x) => !brandT.includes(x) && !STOP_FOTO.has(x) && !/^\d+(ml|oz)?$/.test(x));
+  const todos = tokensFoto(p.name).filter((x) => !brandT.includes(x));
+  const nameT = todos.filter((x) => !STOP_FOTO.has(x) && !FEM.has(x) && !MAS.has(x) && !esNum(x));
   if (!nameT.length) return null;
+  const gn = generoDe(todos); // el genero escrito en el nombre manda sobre el de la seccion
+  const gp = gn.f && !gn.m ? 'mujer' : gn.m && !gn.f ? 'hombre' : p.gender === 'mujer' || p.gender === 'hombre' ? p.gender : 'unisex';
+  const varP = nameT.filter((x) => VARIANTES.has(x)).sort().join(',');
   let best = null;
   for (const c of cands) {
     if (!brandT.every((b) => c.t.has(b))) continue;
     if (!nameT.every((n) => c.t.has(n))) continue;
-    const extras = [...c.t].filter((x) => !brandT.includes(x) && !nameT.includes(x) && !STOP_FOTO.has(x) && !/^\d+(ml|oz)?$/.test(x));
-    if (extras.some((x) => DISTINTIVAS.has(x)) || extras.length > 1) continue; // otra version del perfume
-    const score = 10 - extras.length + (c.ml >= 95 && c.ml <= 105 ? 1 : 0) + (c.inStock ? 0.5 : 0);
+    if (!generoCompatible(gp, c.g || generoDe(c.t))) continue;
+    const resto = [...c.t].filter((x) => !brandT.includes(x) && !STOP_FOTO.has(x) && !FEM.has(x) && !MAS.has(x) && !esNum(x));
+    if (resto.filter((x) => VARIANTES.has(x)).sort().join(',') !== varP) continue; // otra variante/flanker
+    if (resto.some((x) => !nameT.includes(x))) continue;                           // palabras sobrantes = otra linea
+    const score = 10 + (c.ml >= 95 && c.ml <= 105 ? 1 : 0) + (c.inStock ? 0.5 : 0);
     if (!best || score > best.score) best = { score, img: c.img };
   }
   return best ? best.img : null;
@@ -309,6 +340,7 @@ async function descargarFoto(url, id) {
     const tmp = path.join(IMG_DIR, `.${name}.tmp`);
     fs.writeFileSync(tmp, buf);
     fs.renameSync(tmp, path.join(IMG_DIR, name));
+    for (const f of fs.readdirSync(IMG_DIR)) if (f !== name && f.replace(/\.[a-z0-9]+$/i, '') === base) fs.unlinkSync(path.join(IMG_DIR, f)); // sin duplicados con otra extension
     return `${IMG_REL}/${name}`;
   } catch { return null; } finally { clearTimeout(timer); }
 }
@@ -327,7 +359,7 @@ async function enriquecerFotosP11(products, previous = [], fuentes = FUENTES_FOT
   let pend = [];
   for (const p of products) {
     if (p.cat !== 'p11') continue;
-    const local = fotoLocal(p.id); // 1) cache en disco: sin ninguna peticion externa
+    const local = REHACER_FOTOS ? null : fotoLocal(p.id); // cache en disco: sin ninguna peticion externa
     if (local) { p.image = local; stats.disco++; continue; }
     p.image = null;
     if (okUrl(manuales[p.id]) && (await guardar(p, manuales[p.id], 'manual'))) continue; // 2) manual
@@ -346,6 +378,7 @@ async function enriquecerFotosP11(products, previous = [], fuentes = FUENTES_FOT
   // 3) Millennio
   await asignar(products.filter((p) => p.cat === 'orig' && p.image && !p.combo).map((p) => ({
     t: new Set(tokensFoto(`${p.brand} ${p.name}`)), img: p.image, ml: mlDe(p.size || ''), inStock: !!p.inStock,
+    g: p.gender === 'mujer' ? { f: true, m: false, u: false } : p.gender === 'hombre' ? { f: false, m: true, u: false } : generoDe(tokensFoto(`${p.name}`)),
   })), 'millennio');
   // 4) catalogos publicos
   for (const [nombre, f] of Object.entries(fuentes)) {
@@ -371,6 +404,13 @@ async function enriquecerFotosP11(products, previous = [], fuentes = FUENTES_FOT
   // 5) ultimo recurso: la URL externa que ya tenia de una corrida anterior (no se pierde la foto)
   for (const p of pend) if (previas.has(p.id)) { p.image = previas.get(p.id); stats.previa++; }
   stats.sin = pend.filter((p) => !p.image).length;
+  if (REHACER_FOTOS) { // las fotos viejas que ya no pasan las reglas estrictas se retiran del disco
+    for (const p of products) {
+      if (p.cat !== 'p11' || (p.image && p.image.startsWith(IMG_REL + '/'))) continue;
+      const base = idLimpio(p.id);
+      try { for (const f of fs.readdirSync(IMG_DIR)) if (f.replace(/\.[a-z0-9]+$/i, '') === base) { fs.unlinkSync(path.join(IMG_DIR, f)); stats.retiradas = (stats.retiradas || 0) + 1; } } catch { /* sin carpeta */ }
+    }
+  }
   return stats;
 }
 
@@ -669,7 +709,7 @@ async function main() {
   }
 
   const f = await enriquecerFotosP11(result, previous.products);
-  console.log(`> fotos Perfumeria 1.1: descargadas ${f.manual + f.millennio + f.disfragancias + f.perfumesarabes + f.valmara} (manual ${f.manual}, Millennio ${f.millennio}, disfragancias ${f.disfragancias}, perfumesarabes ${f.perfumesarabes}, valmara ${f.valmara}); ya en disco ${f.disco}; enlace externo anterior ${f.previa}; descargas fallidas ${f.sinDescarga}; sin foto ${f.sin}`);
+  console.log(`> fotos Perfumeria 1.1: descargadas ${f.manual + f.millennio + f.disfragancias + f.perfumesarabes + f.valmara} (manual ${f.manual}, Millennio ${f.millennio}, disfragancias ${f.disfragancias}, perfumesarabes ${f.perfumesarabes}, valmara ${f.valmara}); ya en disco ${f.disco}; enlace externo anterior ${f.previa}; descargas fallidas ${f.sinDescarga}; sin foto ${f.sin}${f.retiradas ? `; fotos viejas retiradas ${f.retiradas}` : ''}`);
 
   result.sort((a, b) => a.cat.localeCompare(b.cat) || a.name.localeCompare(b.name, 'es'));
   const payload = { updatedAt: now, demo: false, meta, products: result };
