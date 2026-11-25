@@ -28,6 +28,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Instalar navegador (solo para leer Casa Phone)
+        continue-on-error: true   # si falla, el script usa el plan B sin navegador
+        run: |
+          npm install --no-save --no-package-lock playwright@1.49.1
+          npx playwright install --with-deps chromium
       - name: Sincronizar inventario
         run: node scripts/sync-proveedores.js
       - name: Guardar products.json si cambió
