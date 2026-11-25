@@ -173,7 +173,7 @@
       tags.appendChild(el('span', { class: 'tag' + (v.estado === 'Nuevo' ? ' tag-gold' : ''), text: v.estado }));
       cartItem = {
         key: v.id, cat: p.cat, name: p.model,
-        variant: v.gb + ' · ' + v.color + ' · ' + v.estado + (v.battery ? ' · Batería ' + v.battery + '%' : ''), price: v.price, image: p.image
+        variant: v.gb + ' · ' + v.color + ' · ' + v.estado + (v.battery ? ' · Batería ' + v.battery + '%' : ''), price: v.price, image: v.image || p.image
       };
     } else if (p.cat === 'tech') {
       chips.appendChild(el('span', { class: 'chip', text: p.subcatLabel }));
@@ -185,7 +185,7 @@
     }
     if (!p.inStock) tags.appendChild(el('span', { class: 'tag tag-red', text: 'Agotado' }));
 
-    node.appendChild(el('div', { class: 'card-img' }, imgNode(p.image, EMOJI[p.cat]), tags));
+    node.appendChild(el('div', { class: 'card-img' }, imgNode((state && state.v.image) || p.image, EMOJI[p.cat]), tags));
     body.appendChild(el('div', { class: 'card-brand', text: p.cat === 'tech' ? '' : brand }));
     body.appendChild(el('h3', { class: 'card-name', text: name }));
 
