@@ -1,0 +1,10 @@
+{
+  "name": "luxpoint7",
+  "private": true,
+  "version": "1.0.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "sync": "node scripts/sync-proveedores.js",
+    "sync:debug": "node scripts/sync-proveedores.js --debug"
+  }
+}

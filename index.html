@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es-CO">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>LuxPoint7 · Perfumes, iPhone e innovación</title>
+  <meta name="description" content="Perfumes originales, iPhone nuevos y seminuevos y accesorios de alta calidad. Envíos a todo Colombia por Inter Rapidísimo. Compra segura por WhatsApp.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Barra superior de confianza -->
+  <div class="trustbar" role="region" aria-label="Información de envíos y garantías">
+    <div class="wrap trustbar-in">
+      <span>🚚 Envíos a todo Colombia por <strong>Inter Rapidísimo</strong></span>
+      <span>⏱ Entrega estimada: <strong>3 a 6 días hábiles</strong></span>
+      <span>✅ Perfumes originales certificados</span>
+      <span>📱 iPhone con <strong>12 meses de garantía</strong></span>
+      <span>💬 Pago seguro, cierras por WhatsApp</span>
+    </div>
+  </div>
+
+  <header class="header">
+    <div class="wrap header-in">
+      <a class="logo" href="./" aria-label="LuxPoint7, inicio"><span class="logo-mark">L7</span><span class="logo-text">LuxPoint<b>7</b></span></a>
+      <form class="search" id="search-form" role="search">
+        <label for="q" class="sr-only">Buscar productos</label>
+        <input id="q" type="search" placeholder="Buscar perfumes, iPhone, cargadores…" autocomplete="off" maxlength="80">
+        <button type="submit" aria-label="Buscar">🔍</button>
+      </form>
+      <button class="cart-btn" id="open-cart" type="button" aria-label="Abrir carrito">
+        <span aria-hidden="true">🛒</span><span class="cart-btn-text">Carrito</span>
+        <span class="cart-count" id="cart-count" hidden>0</span>
+      </button>
+    </div>
+    <nav class="wrap catnav" id="catnav" aria-label="Categorías"></nav>
+  </header>
+
+  <main class="wrap layout">
+    <div id="demo-banner" class="alert alert-warn" hidden></div>
+
+    <aside class="filters" id="filters" aria-label="Filtros">
+      <div class="filters-head">
+        <strong>Filtros</strong>
+        <button type="button" class="btn btn-link" id="filters-clear">Limpiar</button>
+      </div>
+      <div id="filters-body"></div>
+    </aside>
+
+    <section class="results" aria-live="polite">
+      <div class="catinfo" id="catinfo"></div>
+      <div class="toolbar">
+        <button type="button" class="btn btn-outline filters-toggle" id="filters-toggle">☰ Filtros</button>
+        <span class="count" id="result-count"></span>
+        <label class="sort"><span>Ordenar</span>
+          <select id="sort">
+            <option value="rel">Más relevantes</option>
+            <option value="asc">Menor precio</option>
+            <option value="desc">Mayor precio</option>
+            <option value="az">Nombre A–Z</option>
+          </select>
+        </label>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div class="more"><button type="button" class="btn btn-outline" id="more" hidden>Ver más productos</button></div>
+      <p class="muted center" id="updated"></p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <p><strong>LuxPoint7</strong> · Envíos nacionales por Inter Rapidísimo · 3 a 6 días hábiles.</p>
+      <p class="muted">Perfumes: envío directo desde bodega con remitente LuxPoint7. iPhone: despacho controlado, el equipo pasa primero por revisión. Los precios y la disponibilidad se actualizan automáticamente y pueden cambiar sin previo aviso.</p>
+    </div>
+  </footer>
+
+  <!-- Carrito lateral -->
+  <div class="overlay" id="cart-overlay" hidden></div>
+  <aside class="drawer" id="cart" aria-hidden="true" aria-label="Carrito de compras">
+    <div class="drawer-head">
+      <strong>Tu carrito</strong>
+      <button type="button" class="icon-btn" id="close-cart" aria-label="Cerrar carrito">✕</button>
+    </div>
+    <div class="alert alert-info" id="cart-notice" hidden></div>
+    <div class="drawer-body" id="cart-body"></div>
+    <div class="drawer-foot" id="cart-footer"></div>
+  </aside>
+
+  <!-- Cierre de compra -->
+  <dialog class="modal" id="checkout" aria-labelledby="co-title">
+    <form id="checkout-form" novalidate>
+      <h2 id="co-title">Finalizar compra</h2>
+      <p class="muted" id="co-summary"></p>
+      <label>Nombre completo
+        <input name="nombre" type="text" autocomplete="name" maxlength="80" required>
+      </label>
+      <label>Celular (WhatsApp)
+        <input name="celular" type="tel" inputmode="numeric" autocomplete="tel-national" maxlength="14" placeholder="3001234567" required>
+      </label>
+      <label>Ciudad / Departamento
+        <input name="ciudad" type="text" autocomplete="address-level2" maxlength="80" placeholder="Ej. Neiva, Huila" required>
+      </label>
+      <label>Dirección de entrega
+        <input name="direccion" type="text" autocomplete="street-address" maxlength="140" placeholder="Calle, número, barrio, apto/casa" required>
+      </label>
+      <label>Medio de pago preferido
+        <select name="pago" id="co-pago" required><option value="">Elige uno…</option></select>
+      </label>
+      <p class="muted small">Tus datos solo se usan para armar el mensaje de WhatsApp; esta página no los guarda. Te enviaremos las cuentas para que pagues y mandes el comprobante.</p>
+      <p class="form-error" id="co-error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="co-cancel">Volver</button>
+        <button type="submit" class="btn btn-primary">Confirmar y abrir WhatsApp</button>
+      </div>
+    </form>
+    <div id="co-success" hidden>
+      <h2>¡Casi listo!</h2>
+      <p>Tu código de orden es <strong id="co-code" class="code"></strong>.</p>
+      <p>Se abrió WhatsApp con tu pedido. Presiona <em>Enviar</em> para que te mandemos las cuentas de pago. Si no se abrió, usa el botón.</p>
+      <p><a id="co-link" class="btn btn-primary" href="#" target="_blank" rel="noopener noreferrer">Abrir WhatsApp</a></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="co-back">Seguir revisando</button>
+        <button type="button" class="btn btn-link" id="co-done">Ya envié mi pedido, vaciar carrito</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="cart.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
