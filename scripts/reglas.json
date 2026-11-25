@@ -1,0 +1,44 @@
+{
+  "_ayuda": "Reglas de precio y filtros. Aqui NO va ningun dato sensible. Los margenes son en pesos colombianos (COP).",
+
+  "p11": { "margen": 30000 },
+  "orig": { "margen": 50000 },
+  "iphone": { "margen": 160000 },
+
+  "tech": {
+    "redondeoA": 500,
+    "multiplicadorBajo": 2,
+    "puntosMargen": [[15000, 15000], [30000, 24000], [50000, 30000]],
+    "margenAltoFijo": 30000,
+    "margenAltoPorcentaje": 0.15,
+    "margenMinimoFijo": 2000,
+    "margenMinimoPorcentaje": 0.15,
+    "descuentoSobreReferencia": 0.03,
+    "categoriasExcluidas": ["bicicletas", "mundo-bebe"]
+  },
+
+  "minimosParaPublicar": { "p11": 20, "orig": 30, "iphone": 10, "tech": 30 },
+
+  "marcasArabes": [
+    "AFNAN", "AL HARAMAIN", "ARABIYAT PRESTIGE", "ARMAF", "BHARARA", "CAPONES", "DAKOTA", "DUMONT",
+    "EMPER", "FRAGANCE WORLD", "JO MILANO PARIS", "KORBAJ", "LATTAFA", "LAVERNE", "LOUIS CARDIN",
+    "MAISON ALHAMBRA", "MATAI", "MATIN MARTIN", "MERAKAI", "NUSUK", "ORIENTICA", "PARIS CORNER",
+    "RASASI", "RAYHAAN", "SWISS ARABIAN", "ZAKAT", "DUMONT PARIS", "BHARARA KING"
+  ],
+  "marcasNicho": [
+    "AHLI", "ALEXANDRE J", "AMOUAGE", "ANOTHER LAB", "BLACKOUD", "BON PARFUMEUR", "BOND", "BORNTOSTANDOUT",
+    "CREED", "DEVIER", "ELIVI", "EMMIR MILANO", "ESSENTIAL PARFUMS", "FUGAZZI", "GEVILL", "GHETTO",
+    "GIARDINI DI TOSCANA", "GIARDI DITOSCANA", "ILMIN", "INITIO", "KAJAL", "LE LABO", "LORENZO PAZZAGLIA",
+    "LOUIS VUITTON", "MAISON MARGIELA", "MAISON FRANCIS KURKDJIAN", "MAISON FRANCIS KURKDIIAN", "MANCERA",
+    "MATIERE PREMIERE", "MONTALE", "MUNDUS", "NEW NOTES", "ORTO PARISI", "PANTHEON", "PARFUMS DE MARLY",
+    "PHILIPP PLEIN", "ROJA", "STEPHEN HUMBERT LUCAS", "TIZIANA TERENZI", "VOET", "XERJOFF"
+  ],
+  "marcasConocidas": [
+    "CAROLINA HERRERA", "PACO RABANNE", "GIORGIO ARMANI", "JEAN PAUL GLAUTIER", "JEAN PAUL GAULTIER",
+    "YVES SAINT LAUREN", "YVES SAINT LAURENT", "HUGO BOSS", "DOLCE GABBANA", "DOLCE & GABBANA",
+    "CALVIN KLEIN", "RALPH LAUREN", "POLO RALPH LAUREN", "VICTOR Y ROLF", "VIKTOR & ROLF", "ARIANA GRANDE",
+    "VICTORIA´S SECRET", "VICTORIAS SECRET", "TOMMY HILFINGER", "TOMMY HILFIGER", "JESUS DEL POZO",
+    "PERRY ELLIS", "GILLES CANTUEL", "ISSEY MIYAKE", "TED LAPIDUS", "SWISS ARMY", "JEAN PASCAL",
+    "ANTONIO BANDERAS", "BILLIE EILISH", "MARC JACOBS", "SALVATORE FERRAGAMO", "ROGER & GALLET"
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "_ayuda": "Opcional. Precios de referencia del mercado para la categoria Innovacion. Formato: \"ID_DEL_PRODUCTO\": precio_en_pesos. El ID es el numero que aparece como 'tech-123' en data/products.json (123). Si lo llenas, la web muestra 'Precio de referencia' tachado y el ahorro; el script intenta quedar 3 % por debajo sin bajar del margen minimo. Si lo dejas vacio, no se muestra comparacion (nunca se inventan precios).",
+  "porId": {}
+}
