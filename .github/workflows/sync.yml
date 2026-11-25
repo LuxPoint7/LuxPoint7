@@ -1,0 +1,75 @@
+name: Sincronizar proveedores y publicar
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # cada 6 horas (hora UTC)
+  workflow_dispatch:         # botón manual en la pestaña Actions
+  push:
+    branches: [main]
+    paths-ignore:
+      - "data/products.json"
+      - "**/*.md"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Sincronizar inventario
+        run: node scripts/sync-proveedores.js
+      - name: Guardar products.json si cambió
+        run: |
+          git config user.name "luxpoint7-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/products.json
+          if git diff --cached --quiet; then
+            echo "Sin cambios"
+          else
+            git commit -m "chore: actualizar inventario"
+            git push
+          fi
+
+  deploy:
+    needs: sync
+    if: ${{ always() && (needs.sync.result == 'success' || needs.sync.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Generar config con el número de WhatsApp (Secret)
+        run: node scripts/make-config.js
+        env:
+          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+      - name: Armar carpeta pública
+        run: |
+          mkdir -p _site
+          cp index.html styles.css app.js cart.js _site/
+          cp -r data _site/data
+          rm -f _site/data/config.example.json
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
