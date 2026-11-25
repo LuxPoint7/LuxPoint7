@@ -7,6 +7,7 @@
  *   node scripts/sync-proveedores.js --dry      -> muestra el resumen sin escribir nada
  *   node scripts/sync-proveedores.js --only=orig  (p11 | orig | iphone | tech)
  *   node scripts/sync-proveedores.js --debug    -> guarda el HTML crudo en /tmp para revisar selectores
+ *   node scripts/sync-proveedores.js --no-browser -> Casa Phone sin Playwright (solo HTML estatico)
  *
  * SEGURIDAD
  *  - No hay claves, tokens ni correos en este archivo. No se necesita ninguna para leer catalogos publicos.
@@ -35,6 +36,7 @@ const URLS = {
 const argv = process.argv.slice(2);
 const DRY = argv.includes('--dry');
 const DEBUG = argv.includes('--debug');
+const NO_BROWSER = argv.includes('--no-browser') || !!process.env.SYNC_NO_BROWSER;
 const ONLY = (argv.find((a) => a.startsWith('--only=')) || '').split('=')[1];
 
 /* ------------------------------ utilidades ------------------------------ */
@@ -173,6 +175,44 @@ async function syncP11() {
   return parseMayorista(text);
 }
 
+/* -------- Fotos para Perfumeria 1.1 (el proveedor solo trae iconos genericos) -------- */
+const FOTOS_MANUALES = path.join(__dirname, 'imagenes-manuales.json');
+const STOP_FOTO = new Set(('perfume perfumes eau de du la le el parfum toilette edp edt cologne ml caja estuche sencilla lujo cilindro lata cofre ' +
+  'para hombre hombres mujer mujeres men women man woman unisex 100 1 11 original').split(' '));
+const DISTINTIVAS = new Set('elixir intense intenso extreme extremo absolu absolute noir sport night nuit rouge prive black gold oud legend ultra max mini set kit combo duo'.split(' '));
+const tokensFoto = (s) => slug(s).split('-').filter(Boolean);
+
+/**
+ * Asigna foto real a los perfumes 1.1 sin imagen buscando el MISMO perfume (marca + nombre) entre los productos
+ * ya extraidos de Perfumeria Millennio. Solo empareja con alta confianza (no inventa ni adivina).
+ * Prioridad: 1) scripts/imagenes-manuales.json  2) coincidencia por nombre en Millennio.
+ */
+function enriquecerFotosP11(products) {
+  let manuales = {};
+  try { manuales = JSON.parse(fs.readFileSync(FOTOS_MANUALES, 'utf8')).porId || {}; } catch { /* sin archivo */ }
+  const cands = products.filter((p) => p.cat === 'orig' && p.image && !p.combo).map((p) => ({ p, t: new Set(tokensFoto(`${p.brand} ${p.name}`)) }));
+  const stats = { manual: 0, millennio: 0, sin: 0 };
+  for (const p of products) {
+    if (p.cat !== 'p11' || p.image) continue;
+    const man = okUrl(manuales[p.id]);
+    if (man) { p.image = man; stats.manual++; continue; }
+    const brandT = tokensFoto(p.brand);
+    const nameT = tokensFoto(p.name).filter((x) => !brandT.includes(x) && !STOP_FOTO.has(x));
+    if (!nameT.length) { stats.sin++; continue; }
+    let best = null;
+    for (const c of cands) {
+      if (!brandT.every((b) => c.t.has(b))) continue;
+      if (!nameT.every((n) => c.t.has(n))) continue;
+      const extras = [...c.t].filter((x) => !brandT.includes(x) && !nameT.includes(x) && !STOP_FOTO.has(x));
+      if (extras.some((x) => DISTINTIVAS.has(x)) || extras.length > 1) continue; // otra version del perfume
+      const score = 10 - extras.length + (c.p.size === '100 ml' ? 1 : 0) + (c.p.inStock ? 0.5 : 0);
+      if (!best || score > best.score) best = { score, img: c.p.image };
+    }
+    if (best) { p.image = best.img; stats.millennio++; } else stats.sin++;
+  }
+  return stats;
+}
+
 /* ---------------------- 2) Perfumeria Original (Shopify) ------------------ */
 function parseMillennio(products) {
   const out = [];
@@ -219,58 +259,172 @@ async function syncOrig() {
 
 /* ------------------------- 3) iPhone (Casa Phone) ------------------------- */
 /**
- * casaphone.co/iphone/inventario lista cada unidad con: estado (Nuevo/SemiNuevo), modelo, GB, color,
- * bateria y precio. Se agrupa por modelo y cada unidad es una "variante" seleccionable en la web.
+ * casaphone.co/iphone/inventario carga el inventario y las fotos con JavaScript. Por eso:
+ *   1) Se abre con un navegador real (Playwright, instalado en el workflow), se hace scroll hasta cargar
+ *      todas las unidades y se leen las tarjetas del DOM (texto + fotos src/data-src/srcset).
+ *   2) Si Playwright no esta disponible, se usa el HTML estatico como plan B (menos completo).
+ * Cada unidad (estado, GB, color, bateria, precio, foto) es una "variante" seleccionable en la web.
  */
-function parseCasaPhone(html) {
+const UNIT_HREF = /\/iphone\/([a-z0-9-]+)\/([a-z0-9-]+)\/?(?:[?#].*)?$/i;
+
+function pickImg(cands, base) {
+  const urls = [];
+  for (const c of cands || []) {
+    if (!c) continue;
+    for (const part of String(c).split(/,\s+(?=\S)/)) {
+      const u = part.trim().split(/\s+/)[0];
+      if (!u || /^data:/i.test(u)) continue;
+      try { urls.push(new URL(decode(u), base).href); } catch { /* url rota */ }
+    }
+  }
+  const good = urls.filter((u) => /^https:\/\//i.test(u) && !/\.svg(\?|$)/i.test(u) && !/logo|icon|sprite|placeholder|img-pl/i.test(u));
+  const best = good.find((u) => /\/api\/public\/img\//.test(u)) || good[0];
+  return best ? best.replace(/([?&])w=\d+/, '$1w=640') : null;
+}
+
+/** records: [{ href, text, imgs[] }] -> productos agrupados por modelo */
+function parseCasaCards(records, base) {
   const units = [];
-  const re = /<a\b[^>]*href="([^"]*\/iphone\/([a-z0-9]+)\/([a-z0-9]+))"[^>]*>([^<]{6,80})<\/a>/gi;
-  let m;
-  while ((m = re.exec(html))) {
-    const text = decode(m[4]).trim();
-    const t = text.match(/^iPhone\s+(.+?)\s+(\d+\s?(?:GB|TB))\s+(.+)$/i);
+  const seen = new Set();
+  for (const r of records) {
+    const hm = String(r.href || '').match(UNIT_HREF);
+    if (!hm) continue;
+    const modelSlug = hm[1].toLowerCase();
+    const unitId = hm[2].toLowerCase();
+    if (/^\d+(gb|tb)$/.test(unitId) || seen.has(modelSlug + '/' + unitId)) continue; // enlaces de filtro por capacidad
+    const text = String(r.text || '').replace(/ /g, ' ');
+    const flat = text.replace(/\s+/g, ' ').trim().replace(/(Tarjeta\s*\$?\s?[\d.,]+).*$/i, '$1'); // corta lo que venga despues del precio (unidad vecina)
+    const TITLE = /iPhone\s+(.+?)\s+(\d+\s?(?:GB|TB))\s+([^$()]+?)(?=\s+(?:Nuevo|Semi\s?-?Nuevo|Usado|Bat\.?|e-?Sim|Sim\b|Desde|\$|Tarjeta)|\s*$)/i;
+    let t = null;
+    for (const line of text.split(/\n+/)) { // primero por linea (innerText), luego texto plano
+      const l = line.trim();
+      if (/^iPhone\s+.+\d\s?(GB|TB)\s+\S/i.test(l)) { t = l.match(TITLE); if (t) break; }
+    }
+    if (!t) t = flat.match(TITLE);
     if (!t) continue;
-    const before = stripTags(html.slice(Math.max(0, m.index - 700), m.index));
-    // Solo el bloque de esta unidad: termina en el precio "Tarjeta" (asi no se mezcla con la unidad vecina)
-    const after = stripTags(html.slice(m.index, m.index + 1800)).split(/Tarjeta/i)[0];
-    const pm = after.match(/\$\s?([\d.]{5,})/);
+    const color = titleCase(clean(t[3], 30));
+    if (!color || color.split(' ').length > 3) continue;
+    const principal = flat.split(/Tarjeta/i)[0];
+    const pm = principal.match(/\$\s?([\d.]{5,})/);
     if (!pm) continue;
-    const estados = [...before.matchAll(/Semi\s?Nuevo|Nuevo/gi)];
-    const estado = estados.length && /semi/i.test(estados[estados.length - 1][0]) ? 'Seminuevo' : 'Nuevo';
-    const bat = after.match(/Bat\.?\s*(\d{2,3})\s?%/i);
-    const imgs = [...html.slice(Math.max(0, m.index - 900), m.index).matchAll(/<img[^>]+src="([^"]+)"/gi)];
-    let img = imgs.length ? imgs[imgs.length - 1][1] : null;
-    if (img && img.startsWith('/')) img = 'https://casaphone.co' + img;
+    const costo = copToInt(pm[1]);
+    if (!costo || costo < 300000) continue;
+    const bat = flat.match(/Bat\.?\s*(\d{2,3})\s?%/i);
+    const estado = /semi\s?-?nuevo|usado/i.test(flat) ? 'Seminuevo' : /nuevo/i.test(flat) ? 'Nuevo' : bat ? 'Seminuevo' : 'Nuevo';
+    seen.add(modelSlug + '/' + unitId);
     units.push({
-      modelSlug: m[2], unitId: m[3], model: 'iPhone ' + clean(t[1], 40), gb: t[2].toUpperCase().replace(/\s?(GB|TB)/, ' $1'),
-      color: titleCase(clean(t[3], 30)), estado, battery: bat ? Number(bat[1]) : null,
-      costo: copToInt(pm[1]), image: okUrl(img),
+      modelSlug, unitId, model: 'iPhone ' + clean(t[1], 40),
+      gb: t[2].toUpperCase().replace(/\s?(GB|TB)/, ' $1'), color, estado,
+      battery: bat ? Number(bat[1]) : null, costo, image: okUrl(pickImg(r.imgs, base)),
     });
   }
   const byModel = new Map();
-  const seen = new Set();
   for (const u of units) {
-    if (seen.has(u.unitId)) continue;
-    seen.add(u.unitId);
     const id = 'iphone-' + u.modelSlug;
-    if (!byModel.has(id)) {
-      byModel.set(id, { id, cat: 'iphone', provider: 'casaphone', name: u.model, brand: 'Apple', model: u.model, image: u.image, variants: [], price: 0, inStock: true });
-    }
+    if (!byModel.has(id)) byModel.set(id, { id, cat: 'iphone', provider: 'casaphone', name: u.model, brand: 'Apple', model: u.model, image: null, variants: [], price: 0, inStock: true });
     const p = byModel.get(id);
     if (!p.image && u.image) p.image = u.image;
-    p.variants.push({ id: `${id}-${u.unitId}`, gb: u.gb, color: u.color, estado: u.estado, battery: u.battery, price: precioIphone(u.costo), inStock: true });
+    p.variants.push({ id: `${id}-${u.unitId}`, gb: u.gb, color: u.color, estado: u.estado, battery: u.battery, price: precioIphone(u.costo), image: u.image, inStock: true });
   }
   return [...byModel.values()].map((p) => {
     p.variants.sort((a, b) => a.price - b.price);
     p.price = p.variants[0].price;
+    for (const v of p.variants) if (!v.image || v.image === p.image) delete v.image; // solo se guarda si difiere de la del modelo
     return p;
   });
 }
+
+/** Plan B sin navegador: saca tarjetas del HTML estatico (si el sitio las trae renderizadas). */
+function casaRecordsFromHtml(html) {
+  const recs = [];
+  const re = /<a\b[^>]*?href=["']([^"']*\/iphone\/[a-z0-9-]+\/[a-z0-9-]+\/?)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const imgAttrs = (frag) => [...frag.matchAll(/<img\b[^>]*>/gi)].flatMap((m) =>
+    ['src', 'data-src', 'data-lazy-src', 'srcset', 'data-srcset'].map((a) => (m[0].match(new RegExp(`\\s${a}=["']([^"']+)["']`, 'i')) || [])[1]).filter(Boolean));
+  let m;
+  while ((m = re.exec(html))) {
+    let block = m[2];
+    let imgs = imgAttrs(block);
+    if (!/\$\s?\d/.test(stripTags(block))) { // el enlace solo envuelve el titulo: se mira alrededor
+      const tail = html.slice(m.index + m[0].length, m.index + m[0].length + 1500);
+      const cut = tail.search(/<a\b[^>]*href=["'][^"']*\/iphone\/[a-z0-9-]+\/[a-z0-9-]+/i);
+      block += ' ' + (cut > 0 ? tail.slice(0, cut) : tail);
+      imgs = imgs.concat(imgAttrs(html.slice(Math.max(0, m.index - 900), m.index)).slice(-3));
+    }
+    recs.push({ href: m[1], text: decode(block.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, '\n')), imgs });
+  }
+  return recs;
+}
+const parseCasaPhone = (html, base = 'https://casaphone.co') => parseCasaCards(casaRecordsFromHtml(html), base);
+
+async function renderCasaPhone(url) {
+  let chromium;
+  try { ({ chromium } = require('playwright')); } catch { throw new Error('Playwright no esta instalado'); }
+  const browser = await chromium.launch({ args: ['--no-sandbox'] });
+  try {
+    const ctx = await browser.newContext({ userAgent: UA, locale: 'es-CO', viewport: { width: 1280, height: 900 } });
+    const page = await ctx.newPage();
+    if (DEBUG) page.on('response', (r) => { if (/json/i.test(r.headers()['content-type'] || '')) console.log(`\n   [debug] JSON ${r.status()} ${r.url().slice(0, 160)}`); });
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+    const countLinks = () => page.evaluate(() => document.querySelectorAll('a[href*="/iphone/"]').length);
+    let last = -1, stable = 0;
+    for (let i = 0; i < 40 && stable < 3; i++) {
+      const more = page.getByRole('button', { name: /ver m[aá]s|cargar m[aá]s|mostrar m[aá]s/i }).first();
+      if (await more.count()) { try { await more.click({ timeout: 2000 }); } catch { /* sin boton */ } }
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.waitForTimeout(900);
+      const n = await countLinks();
+      stable = n === last ? stable + 1 : 0;
+      last = n;
+    }
+    await page.evaluate(async () => { // recorrido lento para que carguen las fotos diferidas
+      for (let y = 0; y < document.body.scrollHeight; y += 500) { window.scrollTo(0, y); await new Promise((r) => setTimeout(r, 70)); }
+      window.scrollTo(0, 0);
+    });
+    await page.waitForTimeout(1500);
+    if (DEBUG) dump('iphone-render', await page.content());
+    return await page.evaluate(() => {
+      const re = /\/iphone\/[a-z0-9-]+\/[a-z0-9-]+\/?$/i;
+      const path = (a) => new URL(a.href, location.href).pathname.replace(/\/$/, '');
+      const isUnit = (a) => re.test(new URL(a.href, location.href).pathname);
+      const out = [];
+      for (const a of document.querySelectorAll('a[href]')) {
+        if (!isUnit(a)) continue;
+        let card = a;
+        while (card.parentElement && card.parentElement !== document.body) { // sube hasta la tarjeta (1 sola unidad)
+          const keys = new Set([...card.parentElement.querySelectorAll('a[href]')].filter(isUnit).map(path));
+          if (keys.size > 1) break;
+          card = card.parentElement;
+        }
+        const imgs = [...card.querySelectorAll('img')].flatMap((i) => [i.currentSrc, i.src, i.getAttribute('data-src'), i.getAttribute('srcset'), i.getAttribute('data-srcset')]);
+        for (const e of card.querySelectorAll('[style*="url("]')) { const m = (e.getAttribute('style') || '').match(/url\(["']?([^"')]+)/); if (m) imgs.push(m[1]); }
+        out.push({ href: a.href, text: card.innerText, imgs: imgs.filter(Boolean) });
+      }
+      return out;
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
+const countUnits = (ps) => ps.reduce((n, p) => n + p.variants.length, 0);
 async function syncIphone() {
   const base = new URL(URLS.iphone).origin;
-  const { text } = await http(`${base}/iphone/inventario`);
-  dump('iphone', text);
-  return parseCasaPhone(text);
+  const url = `${base}/iphone/inventario`;
+  let best = [];
+  if (!NO_BROWSER) {
+    try {
+      best = parseCasaCards(await renderCasaPhone(url), base);
+      console.log(`\n   navegador: ${best.length} modelos / ${countUnits(best)} unidades`);
+    } catch (e) { console.log(`\n   (sin navegador: ${String(e.message).split('\n')[0]})`); }
+  }
+  if (best.length < rules.minimosParaPublicar.iphone) { // plan B: HTML estatico
+    const { text } = await http(url);
+    dump('iphone', text);
+    const alt = parseCasaPhone(text, base);
+    console.log(`   html estatico: ${alt.length} modelos / ${countUnits(alt)} unidades`);
+    if (countUnits(alt) > countUnits(best)) best = alt;
+  }
+  return best;
 }
 
 /* ---------------------- 4) Innovacion (WooCommerce) ---------------------- */
@@ -353,6 +507,9 @@ async function main() {
     }
   }
 
+  const f = enriquecerFotosP11(result);
+  console.log(`> fotos Perfumeria 1.1: ${f.millennio} desde Millennio, ${f.manual} manuales, ${f.sin} sin foto`);
+
   result.sort((a, b) => a.cat.localeCompare(b.cat) || a.name.localeCompare(b.name, 'es'));
   const payload = { updatedAt: now, demo: false, meta, products: result };
   const anyOk = Object.values(meta.providers).some((x) => x.ok);
@@ -363,5 +520,5 @@ async function main() {
   console.log(`OK: ${result.length} productos escritos en data/products.json`);
 }
 
-module.exports = { parseMayorista, parseMillennio, parseCasaPhone, parseDtech, splitBrand };
+module.exports = { parseMayorista, parseMillennio, parseCasaPhone, parseCasaCards, enriquecerFotosP11, syncIphone, parseDtech, splitBrand };
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
