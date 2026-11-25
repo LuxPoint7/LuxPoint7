@@ -176,40 +176,201 @@ async function syncP11() {
 }
 
 /* -------- Fotos para Perfumeria 1.1 (el proveedor solo trae iconos genericos) -------- */
-const FOTOS_MANUALES = path.join(__dirname, 'imagenes-manuales.json');
-const STOP_FOTO = new Set(('perfume perfumes eau de du la le el parfum toilette edp edt cologne ml caja estuche sencilla lujo cilindro lata cofre ' +
-  'para hombre hombres mujer mujeres men women man woman unisex 100 1 11 original').split(' '));
-const DISTINTIVAS = new Set('elixir intense intenso extreme extremo absolu absolute noir sport night nuit rouge prive black gold oud legend ultra max mini set kit combo duo'.split(' '));
-const tokensFoto = (s) => slug(s).split('-').filter(Boolean);
-
 /**
- * Asigna foto real a los perfumes 1.1 sin imagen buscando el MISMO perfume (marca + nombre) entre los productos
- * ya extraidos de Perfumeria Millennio. Solo empareja con alta confianza (no inventa ni adivina).
- * Prioridad: 1) scripts/imagenes-manuales.json  2) coincidencia por nombre en Millennio.
+ * Orden de prioridad para cada perfume 1.1 sin foto:
+ *   0) cache en disco: si ya existe img/perfumes/<id>.* (> 1 KB) se usa directo, sin peticiones externas
+ *   1) scripts/imagenes-manuales.json
+ *   3) coincidencia flexible con los productos ya extraidos de perfumeriamillennio.com
+ *   (toda foto elegida se DESCARGA a img/perfumes/<id>.<ext> y data/products.json guarda esa ruta local)
+ *   4) coincidencia flexible en catalogos publicos: disfragancias.com, perfumesarabescolombia.com (Shopify)
+ *      y valmara.co (PrestaShop). De ellos SOLO se copia la URL de la foto: no se guarda precio ni texto.
+ * Solo empareja con alta confianza (marca + nombre, sin versiones distintas). No usa claves ni cuentas.
  */
-function enriquecerFotosP11(products) {
+const FOTOS_MANUALES = path.join(__dirname, 'imagenes-manuales.json');
+const FOTO_URLS = {
+  disfragancias: process.env.URL_FOTOS_DISFRAGANCIAS || 'https://disfragancias.com',
+  perfumesarabes: process.env.URL_FOTOS_PERFUMESARABES || 'https://perfumesarabescolombia.com',
+  valmara: process.env.URL_FOTOS_VALMARA || 'https://valmara.co',
+};
+const STOP_FOTO = new Set(('perfume perfumes eau de du la le el parfum parfume toilette extrait edp edt cologne ml oz spray vaporizador caja estuche sencilla lujo cilindro lata cofre ' +
+  'para hombre hombres mujer mujeres men women man woman unisex for by pour femme homme dama caballero original 100ml 100 1 11').split(' '));
+const DISTINTIVAS = new Set('elixir intense intenso extreme extremo absolu absolute noir sport night nuit rouge prive black gold oud legend ultra max mini set kit combo duo'.split(' '));
+const EXCLUIR_FOTO = /\b(tester|decant|muestra|miniatura|travel|set|kit|combo|duo|cofre|estuche|body|crema|splash|mist|shampoo|deo|desodorante)\b/i;
+const tokensFoto = (s) => slug(s).split('-').filter(Boolean);
+const mlDe = (s) => { const m = slug(s).match(/(?:^|-)(\d{2,3})-?ml(?:-|$)/); return m ? Number(m[1]) : null; };
+
+/** Crea un candidato {t, img, ml, inStock, strict} a partir de un titulo; el titulo se descarta despues. */
+function candidatoFoto(titulo, img, extra = {}) {
+  const im = okUrl(img);
+  if (!im || EXCLUIR_FOTO.test(String(titulo).replace(/[-_]/g, ' '))) return null;
+  const ml = mlDe(titulo);
+  if (extra.strict && ml && (ml < 90 || ml > 110)) return null; // no usar la foto de un frasco de otro tamano
+  return { t: new Set(tokensFoto(titulo)), img: im, ml, inStock: true, ...extra };
+}
+
+/** Mejor candidato para un perfume (marca + nombre contenidos, sin versiones distintas). */
+function matchFoto(p, cands) {
+  const brandT = tokensFoto(p.brand);
+  const nameT = tokensFoto(p.name).filter((x) => !brandT.includes(x) && !STOP_FOTO.has(x) && !/^\d+(ml|oz)?$/.test(x));
+  if (!nameT.length) return null;
+  let best = null;
+  for (const c of cands) {
+    if (!brandT.every((b) => c.t.has(b))) continue;
+    if (!nameT.every((n) => c.t.has(n))) continue;
+    const extras = [...c.t].filter((x) => !brandT.includes(x) && !nameT.includes(x) && !STOP_FOTO.has(x) && !/^\d+(ml|oz)?$/.test(x));
+    if (extras.some((x) => DISTINTIVAS.has(x)) || extras.length > 1) continue; // otra version del perfume
+    const score = 10 - extras.length + (c.ml >= 95 && c.ml <= 105 ? 1 : 0) + (c.inStock ? 0.5 : 0);
+    if (!best || score > best.score) best = { score, img: c.img };
+  }
+  return best ? best.img : null;
+}
+
+/* --- lectores de catalogos publicos (solo titulo para emparejar + URL de la foto) --- */
+async function fotosShopify(base) {
+  const out = [];
+  for (let page = 1; page <= 12; page++) {
+    const { text } = await http(`${base}/products.json?limit=250&page=${page}`, { json: true });
+    const list = JSON.parse(text).products || [];
+    if (!list.length) break;
+    for (const p of list) {
+      const img = (p.images && p.images[0] && p.images[0].src) || (p.image && p.image.src);
+      const c = candidatoFoto(`${p.vendor || ''} ${p.title || ''}`, img, { strict: true });
+      if (c) out.push(c);
+    }
+    await sleep(600);
+  }
+  return out;
+}
+/** PrestaShop (valmara.co): el nombre del producto viaja en el nombre del archivo de la foto. */
+function parseValmaraFotos(html) {
+  const out = [];
+  const seen = new Set();
+  for (const m of html.matchAll(/<img\b[^>]*>/gi)) {
+    for (const a of ['data-full-size-image-url', 'data-src', 'src']) {
+      const u = (m[0].match(new RegExp(`\\s${a}=["']([^"']+)["']`, 'i')) || [])[1];
+      const f = u && u.match(/^(?:https?:)?\/\/cdn\.valmara\.co\/\d+-[a-z_]+\/([a-z0-9-]+)\.(?:webp|jpe?g|png)/i);
+      if (!f || seen.has(u)) continue;
+      seen.add(u);
+      const c = candidatoFoto(f[1], u.startsWith('//') ? 'https:' + u : u.replace(/^http:/, 'https:'), { strict: true });
+      if (c) out.push(c);
+      break;
+    }
+  }
+  return out;
+}
+async function fotosValmara(query) {
+  const { text } = await http(`${FOTO_URLS.valmara}/index.php?controller=search&s=${encodeURIComponent(query)}`);
+  return parseValmaraFotos(text);
+}
+const FUENTES_FOTOS = {
+  disfragancias: { catalogo: () => fotosShopify(FOTO_URLS.disfragancias) },
+  perfumesarabes: { catalogo: () => fotosShopify(FOTO_URLS.perfumesarabes) },
+  valmara: { busqueda: fotosValmara, maxBusquedas: 150 },
+};
+
+/* --- almacenamiento local: las fotos 1.1 se guardan en img/perfumes/<id-limpio>.<ext> --- */
+const IMG_DIR = path.join(ROOT, 'img', 'perfumes');
+const IMG_REL = 'img/perfumes';
+const MIN_BYTES = 1024;            // menos de 1 KB = archivo roto
+const MAX_BYTES = 5 * 1024 * 1024; // mas de 5 MB = se descarta
+const EXT_POR_TIPO = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/avif': 'avif', 'image/gif': 'gif' };
+const idLimpio = (id) => slug(String(id).replace(/^p11-/, ''));
+
+/** Si ya hay img/perfumes/<id>.* de mas de 1 KB devuelve su ruta relativa; si no, null. */
+function fotoLocal(id) {
+  const base = idLimpio(id);
+  if (!base) return null;
+  let files = [];
+  try { files = fs.readdirSync(IMG_DIR); } catch { return null; }
+  for (const f of files) {
+    const m = f.match(/^(.+)\.(jpg|jpeg|png|webp|avif|gif)$/i);
+    if (!m || m[1] !== base) continue;
+    try { if (fs.statSync(path.join(IMG_DIR, f)).size > MIN_BYTES) return `${IMG_REL}/${f}`; } catch { /* sigue */ }
+  }
+  return null;
+}
+
+/** Descarga una foto https y la guarda en disco. Devuelve la ruta relativa o null si no es una imagen valida. */
+async function descargarFoto(url, id) {
+  const base = idLimpio(id);
+  if (!base || !okUrl(url)) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const r = await fetch(url, { headers: { 'user-agent': UA, accept: 'image/*' }, signal: ctrl.signal, redirect: 'follow' });
+    if (!r.ok) return null;
+    const tipo = String(r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const ext = EXT_POR_TIPO[tipo] || (tipo === 'application/octet-stream' || !tipo ? (new URL(url).pathname.match(/\.(jpe?g|png|webp|avif|gif)$/i) || [])[1] : null);
+    if (!ext) return null; // no es una imagen (o es SVG/HTML)
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.length < MIN_BYTES || buf.length > MAX_BYTES) return null;
+    fs.mkdirSync(IMG_DIR, { recursive: true });
+    const name = `${base}.${ext.toLowerCase().replace('jpeg', 'jpg')}`;
+    const tmp = path.join(IMG_DIR, `.${name}.tmp`);
+    fs.writeFileSync(tmp, buf);
+    fs.renameSync(tmp, path.join(IMG_DIR, name));
+    return `${IMG_REL}/${name}`;
+  } catch { return null; } finally { clearTimeout(timer); }
+}
+
+async function enriquecerFotosP11(products, previous = [], fuentes = FUENTES_FOTOS, bajar = descargarFoto) {
   let manuales = {};
   try { manuales = JSON.parse(fs.readFileSync(FOTOS_MANUALES, 'utf8')).porId || {}; } catch { /* sin archivo */ }
-  const cands = products.filter((p) => p.cat === 'orig' && p.image && !p.combo).map((p) => ({ p, t: new Set(tokensFoto(`${p.brand} ${p.name}`)) }));
-  const stats = { manual: 0, millennio: 0, sin: 0 };
+  const previas = new Map(previous.filter((x) => x.cat === 'p11' && okUrl(x.image)).map((x) => [x.id, x.image])); // fotos externas de corridas viejas
+  const stats = { disco: 0, manual: 0, millennio: 0, disfragancias: 0, perfumesarabes: 0, valmara: 0, previa: 0, sinDescarga: 0, sin: 0 };
+  const guardar = async (p, url, fuente) => {
+    const local = await bajar(url, p.id);
+    if (local) { p.image = local; stats[fuente]++; await sleep(250); return true; }
+    stats.sinDescarga++;
+    return false;
+  };
+  let pend = [];
   for (const p of products) {
-    if (p.cat !== 'p11' || p.image) continue;
-    const man = okUrl(manuales[p.id]);
-    if (man) { p.image = man; stats.manual++; continue; }
-    const brandT = tokensFoto(p.brand);
-    const nameT = tokensFoto(p.name).filter((x) => !brandT.includes(x) && !STOP_FOTO.has(x));
-    if (!nameT.length) { stats.sin++; continue; }
-    let best = null;
-    for (const c of cands) {
-      if (!brandT.every((b) => c.t.has(b))) continue;
-      if (!nameT.every((n) => c.t.has(n))) continue;
-      const extras = [...c.t].filter((x) => !brandT.includes(x) && !nameT.includes(x) && !STOP_FOTO.has(x));
-      if (extras.some((x) => DISTINTIVAS.has(x)) || extras.length > 1) continue; // otra version del perfume
-      const score = 10 - extras.length + (c.p.size === '100 ml' ? 1 : 0) + (c.p.inStock ? 0.5 : 0);
-      if (!best || score > best.score) best = { score, img: c.p.image };
-    }
-    if (best) { p.image = best.img; stats.millennio++; } else stats.sin++;
+    if (p.cat !== 'p11') continue;
+    const local = fotoLocal(p.id); // 1) cache en disco: sin ninguna peticion externa
+    if (local) { p.image = local; stats.disco++; continue; }
+    p.image = null;
+    if (okUrl(manuales[p.id]) && (await guardar(p, manuales[p.id], 'manual'))) continue; // 2) manual
+    pend.push(p);
   }
+  const asignar = async (cands, fuente) => {
+    const resto = [];
+    const lista = cands.filter(Boolean);
+    for (const p of pend) {
+      const url = matchFoto(p, lista);
+      if (url && (await guardar(p, url, fuente))) continue;
+      resto.push(p);
+    }
+    pend = resto;
+  };
+  // 3) Millennio
+  await asignar(products.filter((p) => p.cat === 'orig' && p.image && !p.combo).map((p) => ({
+    t: new Set(tokensFoto(`${p.brand} ${p.name}`)), img: p.image, ml: mlDe(p.size || ''), inStock: !!p.inStock,
+  })), 'millennio');
+  // 4) catalogos publicos
+  for (const [nombre, f] of Object.entries(fuentes)) {
+    if (!pend.length) break;
+    try {
+      if (f.catalogo) await asignar(await f.catalogo(), nombre);
+      else if (f.busqueda) {
+        let n = 0, fallos = 0;
+        for (const p of [...pend]) {
+          if (n >= (f.maxBusquedas || 100) || fallos >= 5) break;
+          n++;
+          try {
+            const c = await f.busqueda(`${p.brand} ${p.name}`.replace(/\([^)]*\)/g, ' ').trim());
+            fallos = 0;
+            const url = matchFoto(p, c.filter(Boolean));
+            if (url && (await guardar(p, url, nombre))) pend = pend.filter((x) => x !== p);
+          } catch { fallos++; }
+          await sleep(700);
+        }
+      }
+    } catch (e) { console.log(`   (fotos ${nombre}: ${String(e.message).slice(0, 80)})`); }
+  }
+  // 5) ultimo recurso: la URL externa que ya tenia de una corrida anterior (no se pierde la foto)
+  for (const p of pend) if (previas.has(p.id)) { p.image = previas.get(p.id); stats.previa++; }
+  stats.sin = pend.filter((p) => !p.image).length;
   return stats;
 }
 
@@ -507,8 +668,8 @@ async function main() {
     }
   }
 
-  const f = enriquecerFotosP11(result);
-  console.log(`> fotos Perfumeria 1.1: ${f.millennio} desde Millennio, ${f.manual} manuales, ${f.sin} sin foto`);
+  const f = await enriquecerFotosP11(result, previous.products);
+  console.log(`> fotos Perfumeria 1.1: descargadas ${f.manual + f.millennio + f.disfragancias + f.perfumesarabes + f.valmara} (manual ${f.manual}, Millennio ${f.millennio}, disfragancias ${f.disfragancias}, perfumesarabes ${f.perfumesarabes}, valmara ${f.valmara}); ya en disco ${f.disco}; enlace externo anterior ${f.previa}; descargas fallidas ${f.sinDescarga}; sin foto ${f.sin}`);
 
   result.sort((a, b) => a.cat.localeCompare(b.cat) || a.name.localeCompare(b.name, 'es'));
   const payload = { updatedAt: now, demo: false, meta, products: result };
@@ -520,5 +681,5 @@ async function main() {
   console.log(`OK: ${result.length} productos escritos en data/products.json`);
 }
 
-module.exports = { parseMayorista, parseMillennio, parseCasaPhone, parseCasaCards, enriquecerFotosP11, syncIphone, parseDtech, splitBrand };
+module.exports = { parseMayorista, parseMillennio, parseCasaPhone, parseCasaCards, enriquecerFotosP11, parseValmaraFotos, fotoLocal, descargarFoto, matchFoto, candidatoFoto, syncIphone, parseDtech, splitBrand };
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });

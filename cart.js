@@ -63,7 +63,7 @@
         items = raw.filter(function (i) {
           return i && typeof i.key === 'string' && CONFIG.providers[i.cat] && i.price > 0 && i.qty > 0;
         }).map(function (i) {
-          return { key: String(i.key), cat: i.cat, name: String(i.name).slice(0, 140), variant: String(i.variant || '').slice(0, 80), price: Number(i.price), qty: Math.min(20, Math.floor(i.qty)), image: i.image || null };
+          return { key: String(i.key), cat: i.cat, name: String(i.name).slice(0, 140), variant: String(i.variant || '').slice(0, 80), price: Number(i.price), qty: Math.min(20, Math.floor(i.qty)), image: (typeof i.image === 'string' && (/^https:\/\//i.test(i.image) || /^img\/perfumes\/[a-z0-9._-]+$/i.test(i.image))) ? i.image : null };
         });
       }
     } catch (e) { items = []; }

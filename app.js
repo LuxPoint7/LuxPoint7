@@ -110,7 +110,7 @@
   /* ------------------------------- helpers UI ------------------------------ */
   function imgNode(url, emoji) {
     var ph = function () { return el('span', { class: 'ph', text: emoji }); };
-    if (!url || !/^https:\/\//i.test(url)) return ph();
+    if (!url || !(/^https:\/\//i.test(url) || /^img\/perfumes\/[a-z0-9._-]+$/i.test(url))) return ph();
     var im = el('img', { src: url, alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer' });
     im.addEventListener('error', function () { im.replaceWith(ph()); });
     return im;
