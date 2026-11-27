@@ -115,6 +115,11 @@
     im.addEventListener('error', function () { im.replaceWith(ph()); });
     return im;
   }
+  // Si img/logo.png aun no esta subido, se muestra el cuadro "L7" de respaldo
+  (function () {
+    var lg = document.getElementById('logo-img');
+    if (lg) lg.addEventListener('error', function () { lg.replaceWith(el('span', { class: 'logo-mark', text: 'L7' })); });
+  })();
   function withBrand(brand, name) { return brand && norm(name).indexOf(norm(brand)) !== 0 ? brand + ' ' + name : name; }
   var EMOJI = { p11: '🧴', orig: '🧴', iphone: '📱', tech: '🔌' };
 

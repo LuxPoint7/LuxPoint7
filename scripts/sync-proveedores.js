@@ -7,13 +7,15 @@
  *   node scripts/sync-proveedores.js --dry      -> muestra el resumen sin escribir nada
  *   node scripts/sync-proveedores.js --only=orig  (p11 | orig | iphone | tech)
  *   node scripts/sync-proveedores.js --debug    -> guarda el HTML crudo en /tmp para revisar selectores
- *   node scripts/sync-proveedores.js --no-browser -> Casa Phone sin Playwright (solo HTML estatico)
+ *   node scripts/sync-proveedores.js --no-browser -> iPhone sin Playwright (solo HTML estatico)
  *
  * SEGURIDAD
  *  - No hay claves, tokens ni correos en este archivo. No se necesita ninguna para leer catalogos publicos.
- *  - Configuracion opcional SOLO por variables de entorno (GitHub Variables/Secrets):
+ *  - Configuracion SOLO por variables de entorno (GitHub Secrets):
  *      SYNC_USER_AGENT        texto con el que te identificas ante los proveedores
- *      URL_P11, URL_ORIG, URL_IPHONE, URL_TECH   para cambiar la URL de un proveedor sin tocar el codigo
+ *  - Las URLs de los 4 proveedores NO estan en el codigo; son OBLIGATORIAS y llegan solo por variables de entorno (GitHub Secrets):
+ *      URL_PERF_11, URL_PERF_ORIG, URL_IPHONE, URL_INNOVACION   (cada una empieza con https://)
+ *    Si falta una, ese proveedor se salta y se conservan sus productos anteriores. Logs y errores nunca muestran direcciones.
  *  - El COSTO del proveedor nunca se guarda en data/products.json (solo el precio final de LuxPoint7).
  *  - Si un proveedor falla o devuelve muy pocos productos, se CONSERVA el inventario anterior de ese proveedor.
  *  - Todo texto externo se limpia (sin HTML) y la web lo pinta con textContent.
@@ -26,11 +28,24 @@ const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'data', 'products.json');
 const REF_FILE = path.join(__dirname, 'precios-referencia.json');
 const UA = process.env.SYNC_USER_AGENT || 'LuxPoint7-Sync/1.0 (+catalogo-sincronizacion)';
+// Las direcciones de los proveedores NO estan en el codigo: llegan por variables de entorno (GitHub Secrets).
+const envUrl = (nombre) => {
+  const v = String(process.env[nombre] || '').trim().replace(/\/+$/, '');
+  return /^https:\/\/[^\s]+$/i.test(v) ? v : '';
+};
 const URLS = {
-  p11: process.env.URL_P11 || 'https://perfumeriamayorista.co',
-  orig: process.env.URL_ORIG || 'https://perfumeriamillennio.com',
-  iphone: process.env.URL_IPHONE || 'https://casaphone.co/iphone',
-  tech: process.env.URL_TECH || 'https://catalogodtech.com',
+  p11: envUrl('URL_PERF_11'),
+  orig: envUrl('URL_PERF_ORIG'),
+  iphone: envUrl('URL_IPHONE'),
+  tech: envUrl('URL_INNOVACION'),
+};
+const VAR_DE = { p11: 'URL_PERF_11', orig: 'URL_PERF_ORIG', iphone: 'URL_IPHONE', tech: 'URL_INNOVACION' };
+const baseDe = (key) => { if (!URLS[key]) throw new Error(`Falta la variable de entorno ${VAR_DE[key]} (o no empieza con https://)`); return URLS[key]; };
+/** Quita de cualquier texto (logs, errores guardados en el JSON publico) toda URL o direccion de proveedor. */
+const oculto = (txt) => {
+  let t = String(txt).replace(/https?:\/\/[^\s"')]+/gi, '[proveedor]');
+  for (const u of Object.values(URLS)) { if (!u) continue; try { t = t.split(new URL(u).hostname).join('[proveedor]'); } catch { /* url invalida */ } }
+  return t;
 };
 
 const argv = process.argv.slice(2);
@@ -70,7 +85,7 @@ async function http(url, { json = false } = {}) {
         signal: ctrl.signal,
         redirect: 'follow',
       });
-      if (!r.ok) throw new Error('HTTP ' + r.status + ' en ' + url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
       return { text: await r.text(), headers: r.headers };
     } catch (e) {
       lastErr = e;
@@ -108,11 +123,11 @@ function splitBrand(text) {
 
 /* ----------------------- 1) Perfumeria 1.1 (100 ml) ---------------------- */
 /**
- * perfumeriamayorista.co: sitio propio (no Shopify). Se lee el texto de la pagina.
+ * Proveedor 1.1: sitio propio (no Shopify). Se lee el texto de la pagina.
  * Solo se publican frascos de 100 ml de la Linea 1.1. Se descartan los bloques "Single"
  * (30/50/100 ml a $9.000-$20.000) y cualquier presentacion distinta de 100 ml.
  */
-function parseMayorista(html) {
+function parseP11(html) {
   const t = stripTags(html);
   const SEP = 'PM • MATERIAL PROTEGIDO';
   const markers = [...t.matchAll(/PERFUMER[ÍI]A PARA (HOMBRE|MUJER)|PERFUMER[ÍI]A [ÁA]RABE/gi)].map((m) => ({
@@ -155,7 +170,7 @@ function parseMayorista(html) {
       const id = 'p11-' + slug(`${brand} ${full}`);
       const prev = map.get(id);
       const prod = prev || {
-        id, cat: 'p11', provider: 'mayorista', name: clean(full), brand: clean(brand, 60), size: '100 ml',
+        id, cat: 'p11', provider: 'p11', name: clean(full), brand: clean(brand, 60), size: '100 ml',
         linea: lineaDeMarca(brand), price: precioP11(o.costo), inStock: !agotado, _g: new Set(),
       };
       prod._g.add(gender);
@@ -170,9 +185,9 @@ function parseMayorista(html) {
   });
 }
 async function syncP11() {
-  const { text } = await http(URLS.p11);
+  const { text } = await http(baseDe('p11'));
   dump('p11', text);
-  return parseMayorista(text);
+  return parseP11(text);
 }
 
 /* -------- Fotos de Perfumeria 1.1: tus archivos img/perfumes/perfumeN.jpg + scripts/mapa-fotos.json -------- */
@@ -231,7 +246,7 @@ function asignarFotosP11(products) {
 }
 
 /* ---------------------- 2) Perfumeria Original (Shopify) ------------------ */
-function parseMillennio(products) {
+function parseOrig(products) {
   const out = [];
   for (const p of products) {
     const blob = `${p.title} ${p.product_type} ${(p.tags || []).join(' ')}`;
@@ -252,7 +267,7 @@ function parseMillennio(products) {
       const size = sizeM ? `${sizeM[1]} ml` : '';
       const multi = variants.length > 1 && v.title && v.title !== 'Default Title';
       out.push({
-        id: `orig-${p.id}-${v.id}`, cat: 'orig', provider: 'millennio',
+        id: `orig-${p.id}-${v.id}`, cat: 'orig', provider: 'orig',
         name: clean(p.title.replace(/^(PERFUME|ESTUCHE)\s+/i, '')) + (multi ? ` - ${clean(v.title, 30)}` : ''),
         brand, size, tipo: ARABES.has(brand.toUpperCase()) ? 'arabe' : NICHO.has(brand.toUpperCase()) ? 'nicho' : 'disenador',
         gender, combo, image: img, price: precioOriginal(costo), inStock: !!v.available,
@@ -264,19 +279,19 @@ function parseMillennio(products) {
 async function syncOrig() {
   const all = [];
   for (let page = 1; page <= 12; page++) {
-    const { text } = await http(`${URLS.orig}/products.json?limit=250&page=${page}`, { json: true });
+    const { text } = await http(`${baseDe('orig')}/products.json?limit=250&page=${page}`, { json: true });
     const list = JSON.parse(text).products || [];
     if (page === 1) dump('orig', text.slice(0, 200000));
     if (!list.length) break;
     all.push(...list);
     await sleep(600);
   }
-  return parseMillennio(all);
+  return parseOrig(all);
 }
 
-/* ------------------------- 3) iPhone (Casa Phone) ------------------------- */
+/* ------------------------- 3) iPhone ------------------------- */
 /**
- * casaphone.co/iphone/inventario carga el inventario y las fotos con JavaScript. Por eso:
+ * La pagina de inventario del proveedor carga el inventario y las fotos con JavaScript. Por eso:
  *   1) Se abre con un navegador real (Playwright, instalado en el workflow), se hace scroll hasta cargar
  *      todas las unidades y se leen las tarjetas del DOM (texto + fotos src/data-src/srcset).
  *   2) Si Playwright no esta disponible, se usa el HTML estatico como plan B (menos completo).
@@ -300,7 +315,7 @@ function pickImg(cands, base) {
 }
 
 /** records: [{ href, text, imgs[] }] -> productos agrupados por modelo */
-function parseCasaCards(records, base) {
+function parseIphoneCards(records, base) {
   const units = [];
   const seen = new Set();
   for (const r of records) {
@@ -338,7 +353,7 @@ function parseCasaCards(records, base) {
   const byModel = new Map();
   for (const u of units) {
     const id = 'iphone-' + u.modelSlug;
-    if (!byModel.has(id)) byModel.set(id, { id, cat: 'iphone', provider: 'casaphone', name: u.model, brand: 'Apple', model: u.model, image: null, variants: [], price: 0, inStock: true });
+    if (!byModel.has(id)) byModel.set(id, { id, cat: 'iphone', provider: 'iphone', name: u.model, brand: 'Apple', model: u.model, image: null, variants: [], price: 0, inStock: true });
     const p = byModel.get(id);
     if (!p.image && u.image) p.image = u.image;
     p.variants.push({ id: `${id}-${u.unitId}`, gb: u.gb, color: u.color, estado: u.estado, battery: u.battery, price: precioIphone(u.costo), image: u.image, inStock: true });
@@ -352,7 +367,7 @@ function parseCasaCards(records, base) {
 }
 
 /** Plan B sin navegador: saca tarjetas del HTML estatico (si el sitio las trae renderizadas). */
-function casaRecordsFromHtml(html) {
+function iphoneRecordsFromHtml(html) {
   const recs = [];
   const re = /<a\b[^>]*?href=["']([^"']*\/iphone\/[a-z0-9-]+\/[a-z0-9-]+\/?)["'][^>]*>([\s\S]*?)<\/a>/gi;
   const imgAttrs = (frag) => [...frag.matchAll(/<img\b[^>]*>/gi)].flatMap((m) =>
@@ -371,16 +386,16 @@ function casaRecordsFromHtml(html) {
   }
   return recs;
 }
-const parseCasaPhone = (html, base = 'https://casaphone.co') => parseCasaCards(casaRecordsFromHtml(html), base);
+const parseIphone = (html, base) => parseIphoneCards(iphoneRecordsFromHtml(html), base);
 
-async function renderCasaPhone(url) {
+async function renderIphone(url) {
   let chromium;
   try { ({ chromium } = require('playwright')); } catch { throw new Error('Playwright no esta instalado'); }
   const browser = await chromium.launch({ args: ['--no-sandbox'] });
   try {
     const ctx = await browser.newContext({ userAgent: UA, locale: 'es-CO', viewport: { width: 1280, height: 900 } });
     const page = await ctx.newPage();
-    if (DEBUG) page.on('response', (r) => { if (/json/i.test(r.headers()['content-type'] || '')) console.log(`\n   [debug] JSON ${r.status()} ${r.url().slice(0, 160)}`); });
+    if (DEBUG) page.on('response', (r) => { if (/json/i.test(r.headers()['content-type'] || '')) console.log(`\n   [debug] JSON ${r.status()} ${oculto(new URL(r.url()).pathname).slice(0, 120)}`); });
     await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
     const countLinks = () => page.evaluate(() => document.querySelectorAll('a[href*="/iphone/"]').length);
     let last = -1, stable = 0;
@@ -425,19 +440,19 @@ async function renderCasaPhone(url) {
 
 const countUnits = (ps) => ps.reduce((n, p) => n + p.variants.length, 0);
 async function syncIphone() {
-  const base = new URL(URLS.iphone).origin;
+  const base = new URL(baseDe('iphone')).origin;
   const url = `${base}/iphone/inventario`;
   let best = [];
   if (!NO_BROWSER) {
     try {
-      best = parseCasaCards(await renderCasaPhone(url), base);
+      best = parseIphoneCards(await renderIphone(url), base);
       console.log(`\n   navegador: ${best.length} modelos / ${countUnits(best)} unidades`);
-    } catch (e) { console.log(`\n   (sin navegador: ${String(e.message).split('\n')[0]})`); }
+    } catch (e) { console.log(`\n   (sin navegador: ${oculto(String(e.message).split('\n')[0])})`); }
   }
   if (best.length < rules.minimosParaPublicar.iphone) { // plan B: HTML estatico
     const { text } = await http(url);
     dump('iphone', text);
-    const alt = parseCasaPhone(text, base);
+    const alt = parseIphone(text, base);
     console.log(`   html estatico: ${alt.length} modelos / ${countUnits(alt)} unidades`);
     if (countUnits(alt) > countUnits(best)) best = alt;
   }
@@ -457,7 +472,7 @@ function subcategoria(name, cats) {
   for (const [key, rx, label] of SUBCATS) if (rx.test(blob)) return { key, label };
   return { key: 'otros', label: 'Otros' };
 }
-function parseDtech(products, refs) {
+function parseTech(products, refs) {
   const out = [];
   for (const p of products) {
     const cats = p.categories || [];
@@ -470,7 +485,7 @@ function parseDtech(products, refs) {
     const price = precioTech(costo, ref);
     const sub = subcategoria(clean(p.name), cats);
     out.push({
-      id: 'tech-' + p.id, cat: 'tech', provider: 'dtech', name: clean(p.name), brand: '',
+      id: 'tech-' + p.id, cat: 'tech', provider: 'tech', name: clean(p.name), brand: '',
       subcat: sub.key, subcatLabel: sub.label, image: okUrl(p.images && p.images[0] && p.images[0].src),
       price, refPrice: ref && ref > price ? ref : null, inStock: p.is_in_stock !== false,
     });
@@ -481,7 +496,7 @@ async function syncTech() {
   const refs = JSON.parse(fs.readFileSync(REF_FILE, 'utf8')).porId || {};
   const all = [];
   for (let page = 1; page <= 30; page++) {
-    const { text, headers } = await http(`${URLS.tech}/wp-json/wc/store/v1/products?per_page=100&page=${page}`, { json: true });
+    const { text, headers } = await http(`${baseDe('tech')}/wp-json/wc/store/v1/products?per_page=100&page=${page}`, { json: true });
     const list = JSON.parse(text);
     if (page === 1) dump('tech', text.slice(0, 200000));
     if (!Array.isArray(list) || !list.length) break;
@@ -489,7 +504,7 @@ async function syncTech() {
     if (page >= Number(headers.get('x-wp-totalpages') || 1)) break;
     await sleep(600);
   }
-  return parseDtech(all, refs);
+  return parseTech(all, refs);
 }
 
 /* -------------------------------- principal ------------------------------ */
@@ -526,7 +541,7 @@ async function main() {
     } catch (e) {
       const kept = previous.products.filter((p) => p.cat === key);
       result.push(...kept);
-      meta.providers[key] = { ok: false, count: kept.length, at: (previous.meta?.providers?.[key]?.at) || null, error: String(e.message || e).slice(0, 200) };
+      meta.providers[key] = { ok: false, count: kept.length, at: (previous.meta?.providers?.[key]?.at) || null, error: oculto(e.message || e).slice(0, 200) };
       console.log(`FALLO (${meta.providers[key].error}). Se conservan ${kept.length} productos anteriores.`);
     }
   }
@@ -547,5 +562,5 @@ async function main() {
   console.log(`OK: ${result.length} productos escritos en data/products.json`);
 }
 
-module.exports = { parseMayorista, parseMillennio, parseCasaPhone, parseCasaCards, asignarFotosP11, syncIphone, parseDtech, splitBrand };
+module.exports = { parseP11, parseOrig, parseIphone, parseIphoneCards, asignarFotosP11, syncIphone, parseTech, splitBrand };
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });

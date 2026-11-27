@@ -28,13 +28,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Instalar navegador (solo para leer Casa Phone)
+      - name: Instalar navegador (para leer el inventario de iPhone)
         continue-on-error: true   # si falla, el script usa el plan B sin navegador
         run: |
           npm install --no-save --no-package-lock playwright@1.49.1
           npx playwright install --with-deps chromium
       - name: Sincronizar inventario
         run: node scripts/sync-proveedores.js
+        env:
+          URL_PERF_11: ${{ secrets.URL_PERF_11 }}
+          URL_PERF_ORIG: ${{ secrets.URL_PERF_ORIG }}
+          URL_IPHONE: ${{ secrets.URL_IPHONE }}
+          URL_INNOVACION: ${{ secrets.URL_INNOVACION }}
       - name: Guardar products.json
         run: |
           mkdir -p img/perfumes

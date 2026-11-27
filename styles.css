@@ -41,6 +41,7 @@ button { cursor: pointer; }
 .header { background: var(--gold); position: sticky; top: 0; z-index: 30; box-shadow: 0 1px 0 rgba(0, 0, 0, .08); }
 .header-in { display: flex; align-items: center; gap: 14px; padding-top: 10px; padding-bottom: 10px; }
 .logo { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--ink); font-weight: 800; font-size: 1.35rem; letter-spacing: -.02em; }
+.logo-img { display: block; height: 48px; width: auto; max-width: 96px; object-fit: contain; image-rendering: auto; }
 .logo-mark { background: var(--ink); color: var(--gold); border-radius: 8px; padding: 2px 7px; font-size: 1rem; }
 .logo b { color: #8a5a00; }
 .search { flex: 1; display: flex; max-width: 640px; background: #fff; border-radius: 6px; box-shadow: var(--shadow); overflow: hidden; }

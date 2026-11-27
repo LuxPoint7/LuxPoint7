@@ -12,7 +12,7 @@
     brand: 'LuxPoint7',
     carrier: 'Inter Rapidísimo',
     eta: '3 a 6 días hábiles',
-    payments: ['Nequi', 'Bancolombia', 'Daviplata', 'Llave Bre-B'],
+    payments: ['Nequi', 'Bancolombia'],
     // Un "paquete" por proveedor/bodega. freeFrom = monto del subtotal (en precios LuxPoint7) desde el cual
     // ESE proveedor envia gratis. flete = costo de envio conocido si no es gratis (null = se confirma por WhatsApp).
     providers: {
