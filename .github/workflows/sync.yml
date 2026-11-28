@@ -33,6 +33,9 @@ jobs:
         run: |
           npm install --no-save --no-package-lock playwright@1.49.1
           npx playwright install --with-deps chromium
+      - name: Instalar sharp (optimiza fotos a WebP)
+        continue-on-error: true   # si falla, las fotos se guardan sin optimizar
+        run: npm install --no-save --no-package-lock sharp@0.33.5
       - name: Sincronizar inventario
         run: node scripts/sync-proveedores.js
         env:
@@ -40,16 +43,16 @@ jobs:
           URL_PERF_ORIG: ${{ secrets.URL_PERF_ORIG }}
           URL_IPHONE: ${{ secrets.URL_IPHONE }}
           URL_INNOVACION: ${{ secrets.URL_INNOVACION }}
-      - name: Guardar products.json
+      - name: Guardar products.json y fotos
         run: |
           mkdir -p img/perfumes
           git config user.name "luxpoint7-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/products.json
+          git add img data/products.json
           if git diff --cached --quiet; then
             echo "Sin cambios"
           else
-            git commit -m "chore: actualizar inventario [skip ci]"
+            git commit -m "chore: actualizar inventario y fotos [skip ci]"
             git pull --rebase --autostash origin main
             git push
           fi
@@ -76,9 +79,14 @@ jobs:
         run: |
           rm -rf _site
           mkdir -p _site img/perfumes
-          cp index.html styles.css app.js cart.js _site/
+          cp index.html styles.css app.js cart.js robots.txt sitemap.xml _site/
           cp -r data _site/data
           cp -r img _site/img
+          # si existe la version .webp de una foto, no se publica el original pesado (jpg/png)
+          for f in _site/img/perfumes/*.jpg _site/img/perfumes/*.jpeg _site/img/perfumes/*.png; do
+            [ -e "$f" ] || continue
+            if [ -f "${f%.*}.webp" ]; then rm -f "$f"; fi
+          done
           rm -f _site/data/config.example.json
           touch _site/.nojekyll
           test -f _site/index.html && test -f _site/data/products.json && test -f _site/data/config.json

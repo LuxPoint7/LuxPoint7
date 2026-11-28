@@ -191,3 +191,81 @@ button { cursor: pointer; }
 }
 @media (max-width: 420px) { .card-body { padding: 9px; } .card-name { font-size: .86rem; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+
+
+/* ---- Primera tanda: confianza, WhatsApp flotante, progreso de envío, sugerencias ---- */
+.help-link { color: var(--ink); font-weight: 700; text-decoration: none; padding: 8px 10px; border-radius: 8px; white-space: nowrap; }
+.help-link:hover { background: rgba(0, 0, 0, .07); }
+.trust { padding: 28px 0 8px; }
+.trust h2 { font-size: 1.25rem; margin: 22px 0 12px; color: var(--ink); }
+.trust-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.trust-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); scroll-margin-top: 130px; }
+.trust-card h3 { margin: 0 0 8px; font-size: 1rem; }
+.trust-card p, .trust-card li { font-size: .9rem; margin: 6px 0; }
+.trust-card ol { margin: 0; padding-left: 18px; }
+.faq { display: grid; gap: 8px; scroll-margin-top: 130px; margin-bottom: 18px; }
+#faq { scroll-margin-top: 130px; }
+.faq details { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+.faq summary { cursor: pointer; font-weight: 700; }
+.faq details p { margin: 8px 0 2px; font-size: .92rem; }
+mark.pendiente { background: #fff1a8; color: #7a4b00; padding: 0 4px; border-radius: 4px; }
+.footer-links { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 10px; }
+.footer-links a { color: var(--gold); text-decoration: none; font-weight: 600; }
+.footer-links a:hover { text-decoration: underline; }
+
+.wa-float { position: fixed; right: 16px; bottom: 16px; z-index: 40; display: inline-flex; align-items: center; gap: 8px; background: #25d366; color: #fff; text-decoration: none; font-weight: 800; padding: 12px 16px; border-radius: 999px; box-shadow: 0 4px 16px rgba(0, 0, 0, .28); font-size: 1rem; }
+.wa-float:hover { background: #1ebe5b; }
+.wa-float > span:first-child { font-size: 1.3rem; line-height: 1; }
+body.no-scroll .wa-float { display: none; }
+@media (max-width: 520px) { .wa-float-text { display: none; } .wa-float { padding: 14px; } }
+
+.card .ask { margin-top: 2px; font-size: .8rem; padding: 4px 6px; align-self: flex-start; }
+.revision { border: 1px solid #bfe6cf; background: var(--green-bg); border-radius: 8px; padding: 6px 10px; font-size: .82rem; }
+.revision summary { cursor: pointer; font-weight: 700; color: #0b6b3a; }
+.revision ul { margin: 6px 0 2px; padding-left: 18px; }
+
+.ship-progress { border: 1px solid #c8d6fb; background: #eaf0ff; border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-size: .86rem; }
+.ship-progress progress { width: 100%; height: 10px; margin-top: 6px; accent-color: var(--green); }
+.suggest { border: 1px dashed var(--line); border-radius: var(--radius); margin: 12px 0; padding: 10px 12px; background: #fffdf3; }
+.suggest h4 { margin: 0 0 2px; font-size: .95rem; }
+.suggest-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.suggest-row:first-of-type { border-top: 0; }
+.suggest-row img, .suggest-row .ph { width: 44px; height: 44px; object-fit: contain; border-radius: 6px; background: #fff; flex: none; display: grid; place-items: center; }
+.suggest-row .sg-main { flex: 1; min-width: 0; font-size: .84rem; }
+.suggest-row .sg-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest-row .btn { padding: 6px 10px; font-size: .8rem; }
+@media (max-width: 700px) { .help-link { display: none; } }
+.footer { padding-bottom: 76px; }
+
+
+/* ---- Segunda tanda: tarjeta limpia + vista rapida ---- */
+.card { cursor: pointer; }
+.card:focus-visible { border-color: var(--blue); }
+.card-body { gap: 4px; }
+.price-from { font-size: .75rem; color: var(--muted); font-weight: 600; }
+.qv { border: 0; padding: 0; border-radius: 14px; width: min(940px, calc(100% - 20px)); max-height: 92vh; overflow: auto; box-shadow: 0 20px 60px rgba(0, 0, 0, .4); background: var(--card); }
+.qv::backdrop { background: rgba(10, 15, 30, .62); }
+body:has(.qv[open]) { overflow: hidden; }
+body:has(.qv[open]) .wa-float { display: none; }
+.qv-close { position: absolute; top: 8px; right: 8px; z-index: 3; background: #fff; border: 1px solid var(--line); border-radius: 999px; width: 36px; height: 36px; font-size: 1rem; }
+.qv-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.qv-media { position: relative; background: linear-gradient(135deg, #f7f4ea, #ecebe4); min-height: 340px; display: grid; place-items: center; border-radius: 14px 0 0 14px; }
+.qv-media img { width: 100%; height: 100%; max-height: 560px; object-fit: contain; padding: 18px; }
+.qv-media .ph { font-size: 5rem; }
+.qv-info { padding: 22px 22px 20px; display: flex; flex-direction: column; gap: 10px; }
+.qv-title { margin: 0; font-size: 1.35rem; line-height: 1.25; padding-right: 30px; }
+.qv-info .price { font-size: 1.7rem; }
+.qv-stock { font-size: .86rem; font-weight: 600; color: var(--green); }
+.qv-stock-out { color: var(--red); }
+.qv-actions { display: grid; gap: 8px; margin-top: 4px; }
+.btn-wa { background: #25d366; color: #fff; }
+.btn-wa:hover { background: #1ebe5b; }
+.qv-share { display: flex; gap: 8px; }
+.qv-share input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: .78rem; color: var(--muted); background: #fafaf8; }
+.qv .selectors select { font-size: .92rem; padding: 8px 10px; }
+@media (max-width: 760px) {
+  .qv { width: 100%; max-width: 100%; max-height: 100vh; height: 100vh; border-radius: 0; }
+  .qv-grid { grid-template-columns: 1fr; }
+  .qv-media { min-height: 260px; border-radius: 0; }
+  .qv-media img { max-height: 320px; }
+}

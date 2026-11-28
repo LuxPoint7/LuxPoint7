@@ -108,19 +108,27 @@
   }
 
   /* ------------------------------- helpers UI ------------------------------ */
-  function imgNode(url, emoji) {
+  function imgNode(url, emoji, eager) {
     var ph = function () { return el('span', { class: 'ph', text: emoji }); };
-    if (!url || !(/^https:\/\//i.test(url) || /^img\/perfumes\/[a-z0-9._-]+$/i.test(url))) return ph();
-    var im = el('img', { src: url, alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer' });
+    if (!url || !(/^https:\/\//i.test(url) || /^img\/(?:perfumes|p)\/[a-z0-9._-]+$/i.test(url))) return ph();
+    var im = el('img', { src: url, alt: '', loading: eager ? 'eager' : 'lazy', decoding: 'async', referrerpolicy: 'no-referrer' });
     im.addEventListener('error', function () { im.replaceWith(ph()); });
     return im;
   }
   // Si img/logo.png aun no esta subido, se muestra el cuadro "L7" de respaldo
   (function () {
     var lg = document.getElementById('logo-img');
-    if (lg) lg.addEventListener('error', function () { lg.replaceWith(el('span', { class: 'logo-mark', text: 'L7' })); });
+    var fallback = function () { lg.replaceWith(el('span', { class: 'logo-mark', text: 'L7' })); };
+    if (lg) { lg.addEventListener('error', fallback); if (lg.complete && lg.naturalWidth === 0) fallback(); }
   })();
   function withBrand(brand, name) { return brand && norm(name).indexOf(norm(brand)) !== 0 ? brand + ' ' + name : name; }
+  // Lista que se muestra en cada iPhone. EDÍTALA para que diga exactamente lo que tú revisas.
+  var REVISION_IPHONE = [
+    'Verificación física y funcional antes del despacho',
+  'Registro en video completo del equipo y su empaque protegido',
+  'Envío asegurado por Inter Rapidísimo (3 a 6 días hábiles)',
+  'Respaldo directo de garantía de 12 meses por fallas internas'
+  ];
   var EMOJI = { p11: '🧴', orig: '🧴', iphone: '📱', tech: '🔌' };
 
   /* ------------------------------- iPhone ---------------------------------- */
@@ -149,86 +157,164 @@
     return { s: s, gbs: gbs, colors: colors, estados: estados, v: v };
   }
 
-  /* -------------------------------- tarjeta -------------------------------- */
-  function card(p) {
-    var node = el('article', { class: 'card' + (p.inStock ? '' : ' soldout'), 'data-id': p.id });
-    var tags = el('div', { class: 'card-tags' });
-    var price = p.price, old = null, name = p.name, brand = p.brand || '';
-    var chips = el('div', { class: 'badge-row' });
-    var body = el('div', { class: 'card-body' });
-    var cartItem = null, state = null;
-
+  /* ------------------- datos de presentacion de un producto ------------------- */
+  function view(p) {
+    var d = { p: p, name: p.name, brand: p.brand || '', price: p.price, old: null, image: p.image, tags: [], chips: [], cartItem: null, state: null, inStock: p.inStock !== false };
     if (p.cat === 'p11') {
-      tags.appendChild(el('span', { class: 'tag tag-gold', text: '100 ml' }));
-      chips.appendChild(el('span', { class: 'chip', text: L.linea[p.linea] || p.linea }));
-      chips.appendChild(el('span', { class: 'chip', text: L.gender[p.gender] }));
-      cartItem = { key: p.id, cat: p.cat, name: withBrand(brand, name), variant: '100 ml', price: p.price, image: p.image };
+      d.tags.push(['tag-gold', '100 ml']);
+      d.chips.push(L.linea[p.linea] || p.linea, L.gender[p.gender]);
+      d.cartItem = { key: p.id, cat: p.cat, name: withBrand(d.brand, p.name), variant: '100 ml', price: p.price, image: p.image };
     } else if (p.cat === 'orig') {
-      tags.appendChild(el('span', { class: 'tag tag-green', text: '100% Original Certificado' }));
-      if (p.combo) tags.appendChild(el('span', { class: 'tag tag-gold', text: 'Combo / Dúo' }));
-      chips.appendChild(el('span', { class: 'chip', text: L.linea[p.tipo] || p.tipo }));
-      chips.appendChild(el('span', { class: 'chip', text: L.gender[p.gender] }));
-      if (p.size) chips.appendChild(el('span', { class: 'chip', text: p.size }));
-      cartItem = { key: p.id, cat: p.cat, name: withBrand(brand, name), variant: p.size, price: p.price, image: p.image };
+      d.tags.push(['tag-green', '100% Original Certificado']);
+      if (p.combo) d.tags.push(['tag-gold', 'Combo / Dúo']);
+      d.chips.push(L.linea[p.tipo] || p.tipo, L.gender[p.gender]);
+      if (p.size) d.chips.push(p.size);
+      d.cartItem = { key: p.id, cat: p.cat, name: withBrand(d.brand, p.name), variant: p.size, price: p.price, image: p.image };
     } else if (p.cat === 'iphone') {
-      state = ivState(p);
-      var v = state.v;
-      price = v.price;
-      tags.appendChild(el('span', { class: 'tag tag-green', text: '12 meses de garantía' }));
-      tags.appendChild(el('span', { class: 'tag' + (v.estado === 'Nuevo' ? ' tag-gold' : ''), text: v.estado }));
-      cartItem = {
-        key: v.id, cat: p.cat, name: p.model,
-        variant: v.gb + ' · ' + v.color + ' · ' + v.estado + (v.battery ? ' · Batería ' + v.battery + '%' : ''), price: v.price, image: v.image || p.image
-      };
-    } else if (p.cat === 'tech') {
-      chips.appendChild(el('span', { class: 'chip', text: p.subcatLabel }));
-      if (p.refPrice) {
-        old = p.refPrice;
-        tags.appendChild(el('span', { class: 'tag tag-red', text: '-' + Math.round((1 - p.price / p.refPrice) * 100) + '%' }));
+      d.state = ivState(p);
+      var v = d.state.v;
+      d.tags.push(['tag-green', '12 meses de garantía']);
+      if (v) {
+        d.price = v.price; d.image = v.image || p.image;
+        d.cartItem = { key: v.id, cat: p.cat, name: p.model, variant: v.gb + ' · ' + v.color + ' · ' + v.estado + (v.battery ? ' · Batería ' + v.battery + '%' : ''), price: v.price, image: d.image };
       }
-      cartItem = { key: p.id, cat: p.cat, name: name, variant: '', price: p.price, image: p.image };
+    } else if (p.cat === 'tech') {
+      d.chips.push(p.subcatLabel);
+      if (p.refPrice) { d.old = p.refPrice; d.tags.push(['tag-red', '-' + Math.round((1 - p.price / p.refPrice) * 100) + '%']); }
+      d.cartItem = { key: p.id, cat: p.cat, name: p.name, variant: '', price: p.price, image: p.image };
     }
+    return d;
+  }
+
+  /* -------------------------------- tarjeta -------------------------------- */
+  // Tarjeta limpia: foto, marca, nombre y precio. Todo lo demas esta en la vista rapida (al hacer clic).
+  function card(p) {
+    var d = p.cat === 'iphone' ? { name: p.model, brand: p.brand || 'Apple', price: p.price, image: p.image, tags: [['tag-green', '12 meses de garantía']], old: null } : view(p);
+    var node = el('article', { class: 'card' + (p.inStock ? '' : ' soldout'), 'data-id': p.id, tabindex: '0', role: 'button', 'aria-label': 'Ver detalle de ' + d.name });
+    var tags = el('div', { class: 'card-tags' });
+    d.tags.forEach(function (t) { tags.appendChild(el('span', { class: 'tag ' + t[0], text: t[1] })); });
     if (!p.inStock) tags.appendChild(el('span', { class: 'tag tag-red', text: 'Agotado' }));
+    node.appendChild(el('div', { class: 'card-img' }, imgNode(d.image, EMOJI[p.cat]), tags));
+    var pr = el('div', { class: 'price-row' });
+    if (p.cat === 'iphone' && p.variants.length > 1) pr.appendChild(el('span', { class: 'price-from', text: 'Desde' }));
+    pr.appendChild(el('span', { class: 'price', text: fmt(d.price) }));
+    if (d.old) pr.appendChild(el('span', { class: 'price-old', title: 'Precio de referencia del mercado', text: fmt(d.old) }));
+    node.appendChild(el('div', { class: 'card-body' },
+      el('div', { class: 'card-brand', text: p.cat === 'tech' ? '' : d.brand }),
+      el('h3', { class: 'card-name', text: d.name }),
+      pr));
+    node.addEventListener('click', function () { openQuick(p); });
+    node.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openQuick(p); } });
+    return node;
+  }
 
-    node.appendChild(el('div', { class: 'card-img' }, imgNode((state && state.v.image) || p.image, EMOJI[p.cat]), tags));
-    body.appendChild(el('div', { class: 'card-brand', text: p.cat === 'tech' ? '' : brand }));
-    body.appendChild(el('h3', { class: 'card-name', text: name }));
+  /* ------------------------ vista rapida (ventana) ------------------------ */
+  var qv, qvBody, qvProduct = null;
+  function shareUrl(id) { return location.origin + location.pathname + '#p=' + encodeURIComponent(id); }
+  function restoreHash() {
+    try { history.replaceState(null, '', S.cat === 'all' ? location.pathname : '#c=' + S.cat); } catch (e) { /* ignore */ }
+  }
 
-    if (state) { // selectores dinamicos del iPhone
+  function renderQuick() {
+    var p = qvProduct;
+    if (!p) return;
+    var d = view(p);
+    qvBody.textContent = '';
+    var tags = el('div', { class: 'card-tags' });
+    d.tags.forEach(function (t) { tags.appendChild(el('span', { class: 'tag ' + t[0], text: t[1] })); });
+    if (p.cat === 'iphone' && d.state.v) tags.appendChild(el('span', { class: 'tag' + (d.state.v.estado === 'Nuevo' ? ' tag-gold' : ''), text: d.state.v.estado }));
+    if (!d.inStock) tags.appendChild(el('span', { class: 'tag tag-red', text: 'Agotado' }));
+    var media = el('div', { class: 'qv-media' }, imgNode(d.image, EMOJI[p.cat], true), tags);
+
+    var info = el('div', { class: 'qv-info' });
+    if (d.brand && p.cat !== 'tech') info.appendChild(el('div', { class: 'card-brand', text: d.brand }));
+    info.appendChild(el('h2', { class: 'qv-title', text: p.cat === 'iphone' ? p.model : p.name }));
+    var pr = el('div', { class: 'price-row' }, el('span', { class: 'price', text: fmt(d.price) }));
+    if (d.old) {
+      pr.appendChild(el('span', { class: 'price-old', title: 'Precio de referencia del mercado', text: fmt(d.old) }));
+      pr.appendChild(el('span', { class: 'save', text: 'Ahorras ' + fmt(d.old - d.price) }));
+    }
+    info.appendChild(pr);
+
+    var chips = el('div', { class: 'badge-row' });
+    d.chips.forEach(function (c) { if (c) chips.appendChild(el('span', { class: 'chip', text: c })); });
+
+    if (d.state) { // selectores dinamicos del iPhone
+      var s = d.state;
       var make = function (label, key, opts, wide) {
         var sel = el('select', { 'aria-label': label });
-        opts.forEach(function (o) { var op = el('option', { value: o, text: o }); if (o === state.s[key]) op.selected = true; sel.appendChild(op); });
-        sel.addEventListener('change', function () { ivSel[p.id][key] = sel.value; node.replaceWith(card(p)); });
+        opts.forEach(function (o) { var op = el('option', { value: o, text: o }); if (o === s.s[key]) op.selected = true; sel.appendChild(op); });
+        sel.addEventListener('change', function () { ivSel[p.id][key] = sel.value; renderQuick(); });
         return el('label', { class: wide ? 'wide' : '' }, label, sel);
       };
-      body.appendChild(el('div', { class: 'selectors' },
-        make('Capacidad', 'gb', state.gbs), make('Estado', 'estado', uniq(p.variants.filter(function (x) { return x.gb === state.s.gb && x.color === state.s.color; }).map(function (x) { return x.estado; }))),
-        make('Color', 'color', state.colors, true)));
-      if (state.v.battery) chips.appendChild(el('span', { class: 'chip', text: 'Batería ' + state.v.battery + '%' }));
-      var nvar = p.variants.length;
-      chips.appendChild(el('span', { class: 'chip', text: nvar + (nvar === 1 ? ' unidad' : ' unidades') + ' en inventario' }));
+      info.appendChild(el('div', { class: 'selectors' },
+        make('Capacidad', 'gb', s.gbs),
+        make('Estado', 'estado', uniq(p.variants.filter(function (x) { return x.gb === s.s.gb && x.color === s.s.color; }).map(function (x) { return x.estado; }))),
+        make('Color', 'color', s.colors, true)));
+      if (s.v) chips.appendChild(el('span', { class: 'chip chip-ok', text: s.v.battery ? 'Batería ' + s.v.battery + '%' : (s.v.estado === 'Nuevo' ? 'Equipo nuevo' : 'Batería: consultar') }));
     }
-    if (chips.childNodes.length) body.appendChild(chips);
+    if (chips.childNodes.length) info.appendChild(chips);
 
-    var pr = el('div', { class: 'price-row' }, el('span', { class: 'price', text: (p.cat === 'iphone' ? '' : '') + fmt(price) }));
-    if (old) {
-      pr.appendChild(el('span', { class: 'price-old', title: 'Precio de referencia del mercado', text: fmt(old) }));
-      pr.appendChild(el('span', { class: 'save', text: 'Ahorras ' + fmt(old - price) }));
-    }
-    body.appendChild(pr);
+    // Stock
+    var stock;
+    if (d.state) {
+      var same = p.variants.filter(function (x) { return x.gb === d.state.s.gb && x.color === d.state.s.color && x.estado === d.state.s.estado && x.inStock !== false; }).length;
+      stock = same ? '✔ ' + same + (same === 1 ? ' unidad disponible' : ' unidades disponibles') + ' de esta configuración · ' + p.variants.length + ' en total del modelo' : 'Sin unidades de esta configuración';
+    } else stock = d.inStock ? '✔ Disponible' : 'Agotado por ahora';
+    info.appendChild(el('div', { class: 'qv-stock' + (d.inStock ? '' : ' qv-stock-out'), text: stock }));
 
     var ship = el('div', { class: 'ship' }, el('span', { text: '🚚 ' + CFG.carrier + ' · ' + CFG.eta }),
       el('span', { text: p.cat === 'iphone' ? 'Despacho controlado: lo revisamos antes de enviártelo' : 'Envío directo desde bodega · remitente LuxPoint7' }));
     if (p.cat === 'orig' && CFG.providers.orig.freeFrom) ship.appendChild(el('span', { text: '🎁 Envío gratis desde ' + fmt(CFG.providers.orig.freeFrom) + ' en Perfumería Original' }));
-    body.appendChild(ship);
+    info.appendChild(ship);
 
-    var disabled = !p.inStock || (state && !state.v);
-    body.appendChild(el('button', {
-      type: 'button', class: 'btn btn-primary', disabled: disabled ? true : null,
-      onclick: function () { window.LPCart.add(cartItem); }
-    }, disabled ? 'Agotado' : 'Agregar al carrito'));
-    node.appendChild(body);
-    return node;
+    if (p.cat === 'iphone') {
+      var rev = el('details', { class: 'revision' }, el('summary', { text: '✔ Revisado por LuxPoint7' }));
+      var ul = el('ul'); REVISION_IPHONE.forEach(function (t) { ul.appendChild(el('li', { text: t })); });
+      rev.appendChild(ul); info.appendChild(rev);
+    }
+
+    var disabled = !d.inStock || !d.cartItem;
+    info.appendChild(el('div', { class: 'qv-actions' },
+      el('button', { type: 'button', class: 'btn btn-primary', disabled: disabled ? true : null,
+        onclick: function () { var it = d.cartItem; qv.close(); window.LPCart.add(it); } }, disabled ? 'Agotado' : '🛒 Agregar al carrito'),
+      el('button', { type: 'button', class: 'btn btn-wa', onclick: function () {
+        var ci = d.cartItem || { name: p.name, variant: '' };
+        window.LPCart.ask('Hola LuxPoint7, quiero información de: ' + ci.name + (ci.variant ? ' (' + ci.variant + ')' : '') + ' — ' + fmt(d.price) + '.');
+      } }, '💬 Preguntar por este producto')));
+
+    // Compartir
+    var url = shareUrl(p.id);
+    var inp = el('input', { type: 'text', readonly: 'readonly', value: url, 'aria-label': 'Enlace para compartir este producto' });
+    inp.addEventListener('focus', function () { inp.select(); });
+    var shareBtn = el('button', { type: 'button', class: 'btn btn-outline' }, navigator.share ? '🔗 Compartir' : '🔗 Copiar enlace');
+    shareBtn.addEventListener('click', function () {
+      var done = function () { shareBtn.textContent = '¡Enlace copiado!'; setTimeout(function () { shareBtn.textContent = navigator.share ? '🔗 Compartir' : '🔗 Copiar enlace'; }, 1800); };
+      if (navigator.share) { navigator.share({ title: 'LuxPoint7 · ' + d.name, url: url }).catch(function () { /* cancelado */ }); return; }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, function () { inp.select(); });
+      else { inp.select(); try { document.execCommand('copy'); done(); } catch (e) { /* el usuario copia a mano */ } }
+    });
+    info.appendChild(el('div', { class: 'qv-share' }, inp, shareBtn));
+
+    qvBody.appendChild(el('div', { class: 'qv-grid' }, media, info));
+  }
+
+  function openQuick(p) {
+    qvProduct = p;
+    renderQuick();
+    try { history.replaceState(null, '', '#p=' + encodeURIComponent(p.id)); } catch (e) { /* ignore */ }
+    if (!qv.open) qv.showModal();
+    qv.scrollTop = 0;
+  }
+  function openFromHash() {
+    var m = /#p=([^&]+)/.exec(location.hash);
+    if (!m) return false;
+    var id; try { id = decodeURIComponent(m[1]); } catch (e) { return false; }
+    var p = products.filter(function (x) { return x.id === id; })[0];
+    if (!p) return false;
+    if (S.cat !== 'all' && S.cat !== p.cat) setCat(p.cat);
+    openQuick(p);
+    return true;
   }
 
   /* ------------------------------ render lista ------------------------------ */
@@ -295,7 +381,7 @@
 
   function setCat(id) {
     S.cat = id; S.sel = {}; S.shown = PAGE; ivSel = {};
-    try { history.replaceState(null, '', id === 'all' ? location.pathname : '#c=' + id); } catch (e) { /* ignore */ }
+    if (!(qv && qv.open)) { try { history.replaceState(null, '', id === 'all' ? location.pathname : '#c=' + id); } catch (e) { /* ignore */ } }
     renderNav(); renderInfo(); renderFilters(); renderGrid();
     document.getElementById('filters').classList.remove('open');
   }
@@ -322,9 +408,21 @@
           else map.set(p.id, { price: p.price, inStock: p.inStock !== false });
         });
         window.LPCart.reconcile(map);
+        // Accesorios sugeridos al comprar un iPhone: los mas baratos (desde $15.000), con foto primero, de 3 subcategorias
+        window.LPCart.setSuggester(function () {
+          var out = [];
+          ['Carga rápida', 'Audífonos', 'Smart Watch'].forEach(function (sc) {
+            var c = products.filter(function (p) { return p.cat === 'tech' && p.inStock !== false && p.subcatLabel === sc && p.price >= 15000; })
+              .sort(function (x, y) { return (y.image ? 1 : 0) - (x.image ? 1 : 0) || (y.refPrice ? 1 : 0) - (x.refPrice ? 1 : 0) || x.price - y.price; })[0];
+            if (c) out.push({ key: c.id, cat: 'tech', name: c.name, variant: '', price: c.price, image: c.image });
+          });
+          return out;
+        });
         var m = /#c=(\w+)/.exec(location.hash);
         var start = m && CATS.some(function (c) { return c.id === m[1]; }) ? m[1] : 'all';
+        var pm = /#p=([^&]+)/.exec(location.hash), hashP = pm ? pm[0] : null;
         setCat(start);
+        if (hashP) { try { history.replaceState(null, '', hashP); } catch (e) { /* ignore */ } openFromHash(); }
       })
       .catch(function () {
         document.getElementById('grid').appendChild(el('p', { class: 'muted', text: 'No pudimos cargar el catálogo en este momento. Recarga la página en unos minutos.' }));
@@ -346,6 +444,11 @@
     var close = el('button', { type: 'button', class: 'icon-btn filters-close', 'aria-label': 'Cerrar filtros' }, '✕');
     close.addEventListener('click', function () { document.getElementById('filters').classList.remove('open'); });
     document.querySelector('.filters-head').appendChild(close);
+    qv = document.getElementById('qv'); qvBody = document.getElementById('qv-body');
+    document.getElementById('qv-close').addEventListener('click', function () { qv.close(); });
+    qv.addEventListener('click', function (e) { if (e.target === qv) qv.close(); }); // clic fuera de la ventana
+    qv.addEventListener('close', function () { qvProduct = null; restoreHash(); });
+    window.addEventListener('hashchange', function () { if (!openFromHash() && qv.open && !/#p=/.test(location.hash)) qv.close(); });
     renderNav(); renderInfo();
     load();
   }

@@ -63,7 +63,7 @@
         items = raw.filter(function (i) {
           return i && typeof i.key === 'string' && CONFIG.providers[i.cat] && i.price > 0 && i.qty > 0;
         }).map(function (i) {
-          return { key: String(i.key), cat: i.cat, name: String(i.name).slice(0, 140), variant: String(i.variant || '').slice(0, 80), price: Number(i.price), qty: Math.min(20, Math.floor(i.qty)), image: (typeof i.image === 'string' && (/^https:\/\//i.test(i.image) || /^img\/perfumes\/[a-z0-9._-]+$/i.test(i.image))) ? i.image : null };
+          return { key: String(i.key), cat: i.cat, name: String(i.name).slice(0, 140), variant: String(i.variant || '').slice(0, 80), price: Number(i.price), qty: Math.min(20, Math.floor(i.qty)), image: (typeof i.image === 'string' && (/^https:\/\//i.test(i.image) || /^img\/(?:perfumes|p)\/[a-z0-9._-]+$/i.test(i.image))) ? i.image : null };
         });
       }
     } catch (e) { items = []; }
@@ -131,7 +131,7 @@
   }
 
   /* ---------------------------------- UI ----------------------------------- */
-  var drawer, overlay, body, footer, badge, noticeBox;
+  var drawer, overlay, body, footer, badge, noticeBox, suggester = null;
 
   function notice(text) {
     if (!noticeBox) return;
@@ -183,8 +183,11 @@
           body.appendChild(alertBox('ok', '¡Envío gratis en ' + g.info.short + '!',
             'Aplica solo al paquete de ese proveedor. Los productos de otros proveedores se despachan por separado y su envío se confirma aparte.'));
         } else if (!g.free) {
-          body.appendChild(alertBox('info', 'Envío gratis en ' + g.info.short + ' desde ' + fmt(g.info.freeFrom) + '.',
-            'Te faltan ' + fmt(g.missing) + ' en productos de esa categoría' + (a.multi ? ' (no se suma con otras categorías).' : '.')));
+          var prog = el('div', { class: 'ship-progress', role: 'note' },
+            el('strong', { text: 'Te faltan ' + fmt(g.missing) + ' para envío gratis en ' + g.info.short + '.' }),
+            el('span', { text: ' Se cuenta solo con productos de esa categoría' + (a.multi ? ' (no se suma con otras).' : '.') }),
+            el('progress', { max: String(g.info.freeFrom), value: String(Math.min(g.subtotal, g.info.freeFrom)), 'aria-label': 'Progreso hacia el envío gratis' }));
+          body.appendChild(prog);
         }
       }
     });
@@ -219,6 +222,27 @@
       group.appendChild(el('div', { class: 'cart-group-sub-total' }, el('span', { text: 'Subtotal paquete' }), el('strong', { text: fmt(g.subtotal) })));
       body.appendChild(group);
     });
+
+    // Sugerencias para completar un iPhone (accesorios), solo si aun no hay accesorios en el carrito
+    var hasIphone = a.groups.some(function (g) { return g.cat === 'iphone'; });
+    var hasTech = a.groups.some(function (g) { return g.cat === 'tech'; });
+    if (hasIphone && !hasTech && suggester) {
+      var sug = [];
+      try { sug = suggester() || []; } catch (e) { sug = []; }
+      if (sug.length) {
+        var box = el('section', { class: 'suggest' },
+          el('h4', { text: 'Completa tu iPhone' }),
+          el('div', { class: 'muted small', text: 'Accesorios de alta calidad. Se despachan en un paquete aparte (el flete se confirma por WhatsApp).' }));
+        sug.forEach(function (it) {
+          var th = it.image ? el('img', { src: it.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : el('span', { class: 'ph', text: '🔌' });
+          if (th.tagName === 'IMG') th.addEventListener('error', function () { th.replaceWith(el('span', { class: 'ph', text: '🔌' })); });
+          box.appendChild(el('div', { class: 'suggest-row' }, th,
+            el('div', { class: 'sg-main' }, el('div', { class: 'sg-name', text: it.name }), el('div', { text: fmt(it.price) })),
+            el('button', { type: 'button', class: 'btn btn-outline', onclick: function () { add(it); } }, 'Agregar')));
+        });
+        body.appendChild(box);
+      }
+    }
 
     // Pie: totales y boton
     footer.appendChild(el('div', { class: 'totals' },
@@ -335,6 +359,21 @@
     if (!win) link.focus();
   }
 
+  /* ----------------------- WhatsApp: consultas y boton flotante ---------------- */
+  function waUrl(text) { return publicConfig.whatsapp ? 'https://wa.me/' + publicConfig.whatsapp + '?text=' + encodeURIComponent(text) : null; }
+  function ask(text) {
+    var u = waUrl(text);
+    if (u) window.open(u, '_blank', 'noopener');
+    else notice('El WhatsApp aún no está disponible. Inténtalo en unos segundos.');
+  }
+  function showWhatsApp() {
+    var fl = document.getElementById('wa-float'), ct = document.getElementById('wa-contact');
+    var u = waUrl('Hola LuxPoint7, tengo una pregunta sobre la tienda.');
+    if (!u) return;
+    if (fl) { fl.href = u; fl.hidden = false; }
+    if (ct) { ct.href = u; ct.hidden = false; }
+  }
+
   /* --------------------------------- init ---------------------------------- */
   function init() {
     drawer = document.getElementById('cart');
@@ -364,10 +403,10 @@
 
     // Numero de WhatsApp (lo genera el despliegue desde un Secret; no esta en el repositorio)
     fetch('data/config.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) { if (j && j.whatsapp) publicConfig.whatsapp = String(j.whatsapp).replace(/[^\d]/g, ''); })
+      .then(function (j) { if (j && j.whatsapp) { publicConfig.whatsapp = String(j.whatsapp).replace(/[^\d]/g, ''); showWhatsApp(); } })
       .catch(function () { /* sin config: el checkout avisara */ });
   }
 
-  window.LPCart = { add: add, reconcile: reconcile, open: open, analyze: analyze, count: function () { return analyze().count; } };
+  window.LPCart = { add: add, ask: ask, setSuggester: function (fn) { suggester = fn; render(); }, reconcile: reconcile, open: open, analyze: analyze, count: function () { return analyze().count; } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

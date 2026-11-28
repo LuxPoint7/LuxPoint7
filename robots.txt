@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://luxpoint7.github.io/LuxPoint7/sitemap.xml
