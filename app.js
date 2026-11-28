@@ -15,7 +15,7 @@
     { id: 'all', nav: 'Todo', title: 'Todo LuxPoint7', desc: 'Perfumes, iPhone y tecnología en un solo carrito. Cada categoría se despacha desde su propia bodega.' },
     { id: 'p11', nav: 'Perfumería 1.1 · 100 ml', title: 'Perfumería 1.1 · Frascos de 100 ml', desc: 'Solo frascos de 100 ml. Envío directo desde bodega con remitente LuxPoint7.' },
     { id: 'orig', nav: 'Perfumería Original', title: 'Perfumería Original', desc: '100 % Original Certificado. Árabes, diseñador y nicho, más combos y dúos.' },
-    { id: 'iphone', nav: 'iPhone', title: 'iPhone originales · Nuevos y seminuevos', desc: '12 meses de garantía. Despacho controlado: cada equipo pasa por nosotros para revisión antes de llegar a ti.' },
+    { id: 'iphone', nav: 'iPhone', title: 'iPhone originales · Nuevos y seminuevos', desc: 'Garantía de 12 meses en equipos nuevos y 8 meses en seminuevos. Despacho controlado: cada equipo pasa por nosotros para revisión antes de llegar a ti.' },
     { id: 'tech', nav: 'Innovación y Accesorios', title: 'Innovación y accesorios de alta calidad', desc: 'Carga rápida, audífonos, smart watch, hogar y gamer a precios competitivos.' }
   ];
 
@@ -189,9 +189,27 @@
   var REVISION_IPHONE = [
   'Verificación física y funcional antes del despacho',
   'Registro en video completo del equipo y su empaque protegido',
-  'Envío asegurado por Inter Rapidísimo (3 a 6 días hábiles)',
-  'Respaldo directo de garantía de 12 meses por fallas internas'
+  'Envío asegurado por Inter Rapidísimo (3 a 6 días hábiles)'
 ];
+  // Garantía por estado del equipo (meses). Cámbiala aquí si algún día cambian las condiciones.
+  var GARANTIA = { 'Nuevo': 12, 'Seminuevo': 8 };
+  function mesesDe(v) { return (v && (Number(v.garantia) || GARANTIA[v.estado])) || 0; }
+  function garantiaTxt(m) { return m + ' meses de garantía'; }
+  // Etiqueta de la tarjeta: si el modelo tiene nuevos y seminuevos a la vez, muestra el rango.
+  function garantiaCard(p) {
+    var vs = p.variants.filter(function (v) { return v.inStock; });
+    if (!vs.length) vs = p.variants;
+    var ms = uniq(vs.map(mesesDe).filter(Boolean)).sort(function (x, y) { return x - y; });
+    if (!ms.length) return null;
+    return ms.length === 1 ? garantiaTxt(ms[0]) : 'Garantía ' + ms[0] + '–' + ms[ms.length - 1] + ' meses';
+  }
+  // Lista de "Revisado por LuxPoint7": tus líneas + la garantía real del equipo elegido
+  function revisionLines(v) {
+    var l = REVISION_IPHONE.filter(function (t) { return !/garant/i.test(t); });
+    var m = mesesDe(v);
+    if (m) l.push(garantiaTxt(m) + (v.estado ? ' (equipo ' + v.estado.toLowerCase() + ')' : ''));
+    return l;
+  }
   var EMOJI = { p11: '🧴', orig: '🧴', iphone: '📱', tech: '🔌' };
 
   /* ------------------------------- iPhone ---------------------------------- */
@@ -243,10 +261,10 @@
     } else if (p.cat === 'iphone') {
       d.state = ivState(p);
       var v = d.state.v;
-      d.tags.push(['tag-green', '12 meses de garantía']);
+      if (v && mesesDe(v)) d.tags.push(['tag-green', garantiaTxt(mesesDe(v))]);
       if (v) {
         d.price = v.price; d.image = v.image || p.image;
-        d.cartItem = { key: v.id, cat: p.cat, name: p.model, variant: v.gb + ' · ' + v.color + ' · ' + v.estado + (v.battery ? ' · Batería ' + v.battery + '%' : ''), price: v.price, image: d.image };
+        d.cartItem = { key: v.id, cat: p.cat, name: p.model, variant: v.gb + ' · ' + v.color + ' · ' + v.estado + (v.battery ? ' · Batería ' + v.battery + '%' : '') + (mesesDe(v) ? ' · Garantía ' + mesesDe(v) + ' meses' : ''), price: v.price, image: d.image };
       }
     } else if (p.cat === 'tech') {
       d.chips.push(p.subcatLabel);
@@ -259,7 +277,7 @@
   /* -------------------------------- tarjeta -------------------------------- */
   // Tarjeta limpia: foto, marca, nombre y precio. Todo lo demas esta en la vista rapida (al hacer clic).
   function card(p) {
-    var d = p.cat === 'iphone' ? { name: p.model, brand: p.brand || 'Apple', price: p.price, image: p.image, tags: [['tag-green', '12 meses de garantía']], old: null } : view(p);
+    var d = p.cat === 'iphone' ? { name: p.model, brand: p.brand || 'Apple', price: p.price, image: p.image, tags: garantiaCard(p) ? [['tag-green', garantiaCard(p)]] : [], old: null } : view(p);
     var node = el('article', { class: 'card' + (p.inStock ? '' : ' soldout'), 'data-id': p.id, tabindex: '0', role: 'button', 'aria-label': 'Ver detalle de ' + d.name });
     var tags = el('div', { class: 'card-tags' });
     extraTags(p).concat(d.tags).forEach(function (t) { tags.appendChild(el('span', { class: 'tag ' + t[0], text: t[1] })); });
@@ -340,7 +358,7 @@
 
     if (p.cat === 'iphone') {
       var rev = el('details', { class: 'revision' }, el('summary', { text: '✔ Revisado por LuxPoint7' }));
-      var ul = el('ul'); REVISION_IPHONE.forEach(function (t) { ul.appendChild(el('li', { text: t })); });
+      var ul = el('ul'); revisionLines(d.state.v).forEach(function (t) { ul.appendChild(el('li', { text: t })); });
       rev.appendChild(ul); info.appendChild(rev);
     }
 

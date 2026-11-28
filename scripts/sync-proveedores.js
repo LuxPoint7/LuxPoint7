@@ -24,6 +24,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { precioP11, precioOriginal, precioIphone, precioTech, rules } = require('./pricing');
 
+// Garantia (meses) por estado del iPhone
+const GARANTIA_MESES = { Nuevo: 12, Seminuevo: 8 };
+
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'data', 'products.json');
 const REF_FILE = path.join(__dirname, 'precios-referencia.json');
@@ -468,7 +471,7 @@ function parseIphoneCards(records, base) {
     if (!byModel.has(id)) byModel.set(id, { id, cat: 'iphone', provider: 'iphone', name: u.model, brand: 'Apple', model: u.model, image: null, variants: [], price: 0, inStock: true });
     const p = byModel.get(id);
     if (!p.image && u.image) p.image = u.image;
-    p.variants.push({ id: `${id}-${u.unitId}`, gb: u.gb, color: u.color, estado: u.estado, battery: u.battery, price: precioIphone(u.costo), image: u.image, inStock: true });
+    p.variants.push({ id: `${id}-${u.unitId}`, gb: u.gb, color: u.color, estado: u.estado, battery: u.battery, garantia: GARANTIA_MESES[u.estado] || GARANTIA_MESES.Seminuevo, price: precioIphone(u.costo), image: u.image, inStock: true });
   }
   return [...byModel.values()].map((p) => {
     p.variants.sort((a, b) => a.price - b.price);

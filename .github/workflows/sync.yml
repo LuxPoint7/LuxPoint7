@@ -75,6 +75,7 @@ jobs:
         run: node scripts/make-config.js
         env:
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          PEDIDOS_SHEET_URL: ${{ secrets.PEDIDOS_SHEET_URL }}
       - name: Armar carpeta pública
         run: |
           rm -rf _site

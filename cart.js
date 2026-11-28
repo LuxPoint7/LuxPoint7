@@ -54,7 +54,7 @@
   /* -------------------------------- estado --------------------------------- */
   var items = []; // { key, cat, name, variant, price, qty, image }
   var catalog = null; // Map id -> {price, inStock}
-  var publicConfig = { whatsapp: '' };
+  var publicConfig = { whatsapp: '', pedidos: '' };
 
   function load() {
     try {
@@ -63,7 +63,7 @@
         items = raw.filter(function (i) {
           return i && typeof i.key === 'string' && CONFIG.providers[i.cat] && i.price > 0 && i.qty > 0;
         }).map(function (i) {
-          return { key: String(i.key), cat: i.cat, name: String(i.name).slice(0, 140), variant: String(i.variant || '').slice(0, 80), price: Number(i.price), qty: Math.min(20, Math.floor(i.qty)), image: (typeof i.image === 'string' && (/^https:\/\//i.test(i.image) || /^img\/(?:perfumes|p)\/[a-z0-9._-]+$/i.test(i.image))) ? i.image : null };
+          return { key: String(i.key), cat: i.cat, name: String(i.name).slice(0, 140), variant: String(i.variant || '').slice(0, 140), price: Number(i.price), qty: Math.min(20, Math.floor(i.qty)), image: (typeof i.image === 'string' && (/^https:\/\//i.test(i.image) || /^img\/(?:perfumes|p)\/[a-z0-9._-]+$/i.test(i.image))) ? i.image : null };
         });
       }
     } catch (e) { items = []; }
@@ -257,18 +257,64 @@
   /* --------------------------- checkout + WhatsApp -------------------------- */
   var dlg, form, formError, successBox;
 
-  var ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  function orderCode() {
+  // Hora de Colombia (no depende de la zona del celular del cliente)
+  function bogota() {
+    var o = {};
+    try {
+      new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
+        .formatToParts(new Date()).forEach(function (p) { o[p.type] = p.value; });
+    } catch (e) {
+      var d = new Date(Date.now() - 5 * 3600 * 1000), z = function (n) { return String(n).padStart(2, '0'); };
+      o = { year: d.getUTCFullYear(), month: z(d.getUTCMonth() + 1), day: z(d.getUTCDate()), hour: z(d.getUTCHours()), minute: z(d.getUTCMinutes()), second: z(d.getUTCSeconds()) };
+    }
+    return { ymd: o.year + o.month + o.day, text: o.year + '-' + o.month + '-' + o.day + ' ' + o.hour + ':' + o.minute + ':' + o.second };
+  }
+
+  // Codigo unico: LP7-AAAAMMDD-NNN (ej. LP7-20261128-482)
+  function orderCode(ymd) {
     var used = [];
     try { used = JSON.parse(localStorage.getItem('lp_orders') || '[]'); } catch (e) { used = []; }
-    var code;
+    var code, n = 0;
     do {
-      var buf = new Uint8Array(4);
+      var buf = new Uint32Array(1);
       (window.crypto || window.msCrypto).getRandomValues(buf);
-      code = 'LP-' + Array.prototype.map.call(buf, function (b) { return ALPHABET[b % ALPHABET.length]; }).join('');
-    } while (used.indexOf(code) !== -1);
+      code = 'LP7-' + ymd + '-' + String(100 + (buf[0] % 900));
+      n++;
+    } while (used.indexOf(code) !== -1 && n < 50);
     try { used.push(code); localStorage.setItem('lp_orders', JSON.stringify(used.slice(-100))); } catch (e) { /* ignore */ }
     return code;
+  }
+
+  /* ----------- registro privado del pedido (Google Apps Script -> Google Sheets) ----------- */
+  // La URL del script llega en data/config.json (la genera el despliegue desde un Secret). Si no hay URL, no se envia nada.
+  var SHEET_RE = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/;
+  function pendingGet() { try { var r = JSON.parse(localStorage.getItem('lp_pending') || '[]'); return Array.isArray(r) ? r : []; } catch (e) { return []; } }
+  function pendingSet(r) { try { localStorage.setItem('lp_pending', JSON.stringify(r.slice(-5))); } catch (e) { /* ignore */ } }
+  function postOrder(rec) {
+    // text/plain + no-cors = peticion simple (sin preflight); keepalive la deja terminar aunque el cliente cambie a WhatsApp
+    return fetch(publicConfig.pedidos, { method: 'POST', mode: 'no-cors', keepalive: true, credentials: 'omit', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(rec) });
+  }
+  function sendOrder(rec) {
+    if (!SHEET_RE.test(publicConfig.pedidos)) return;
+    try { postOrder(rec).catch(function () { pendingSet(pendingGet().concat([rec])); }); }
+    catch (e) { pendingSet(pendingGet().concat([rec])); }
+  }
+  // Si un envio fallo (sin senal), se reintenta en la siguiente visita; el script ignora repetidos.
+  function flushPending() {
+    if (!SHEET_RE.test(publicConfig.pedidos)) return;
+    var q = pendingGet(); if (!q.length) return;
+    pendingSet([]);
+    q.forEach(function (rec) { try { postOrder(rec).catch(function () { pendingSet(pendingGet().concat([rec])); }); } catch (e) { /* ignore */ } });
+  }
+  function orderRecord(code, when, c, a) {
+    var detalle = [];
+    a.groups.forEach(function (g) {
+      g.items.forEach(function (it) {
+        detalle.push(it.qty + ' x ' + it.name + (it.variant ? ' (' + it.variant + ')' : '') + ' — ' + fmt(it.price * it.qty));
+      });
+    });
+    if (a.fleteUnknown) detalle.push('(flete por confirmar)');
+    return { codigo: code, fecha: when, nombre: c.nombre, telefono: c.celular, direccion: c.ciudad + ' — ' + c.direccion, detalle: detalle.join('\n'), total: a.total };
   }
 
   function buildMessage(code, c, a) {
@@ -348,9 +394,11 @@
     if (err) { formError.textContent = err; return; }
 
     var a = analyze();
-    var code = orderCode();
+    var t = bogota();
+    var code = orderCode(t.ymd);
     var url = 'https://wa.me/' + publicConfig.whatsapp + '?text=' + encodeURIComponent(buildMessage(code, c, a));
     var win = window.open(url, '_blank', 'noopener');
+    sendOrder(orderRecord(code, t.text, c, a)); // registro silencioso en tu hoja privada
     form.hidden = true;
     successBox.hidden = false;
     document.getElementById('co-code').textContent = '#' + code;
@@ -403,7 +451,7 @@
 
     // Numero de WhatsApp (lo genera el despliegue desde un Secret; no esta en el repositorio)
     fetch('data/config.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) { if (j && j.whatsapp) { publicConfig.whatsapp = String(j.whatsapp).replace(/[^\d]/g, ''); showWhatsApp(); } })
+      .then(function (j) { if (!j) return; if (j.pedidos && SHEET_RE.test(String(j.pedidos))) { publicConfig.pedidos = String(j.pedidos); flushPending(); } if (j.whatsapp) { publicConfig.whatsapp = String(j.whatsapp).replace(/[^\d]/g, ''); showWhatsApp(); } })
       .catch(function () { /* sin config: el checkout avisara */ });
   }
 
