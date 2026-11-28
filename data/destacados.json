@@ -1,0 +1,4 @@
+{
+  "_ayuda": "Pon aquí los ids de los productos que quieres destacar (aparecen primero, con la etiqueta ⭐ Destacado y en el filtro Destacados). Para sacar el id de un producto: ábrelo en la tienda, pulsa Copiar enlace y copia lo que va después de #p= . Ejemplo: [\"p11-lattafa-khamrah\", \"iphone-iphone-17\"]",
+  "ids": []
+}

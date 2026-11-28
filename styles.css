@@ -269,3 +269,23 @@ body:has(.qv[open]) .wa-float { display: none; }
   .qv-media { min-height: 260px; border-radius: 0; }
   .qv-media img { max-height: 320px; }
 }
+
+
+/* ---- Tercera tanda: descubrimiento, filtros activos, precio, proteccion de fotos ---- */
+.tag-blue { background: var(--blue); }
+.quick-views { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.qv-chip { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 999px; padding: 7px 14px; font-weight: 700; font-size: .86rem; cursor: pointer; }
+.qv-chip[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+.active-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+.fchip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--gold-d); background: #fff8dd; color: var(--ink); border-radius: 999px; padding: 4px 6px 4px 12px; font-size: .8rem; font-weight: 600; cursor: pointer; }
+.fchip .x { background: rgba(0, 0, 0, .1); border-radius: 999px; width: 18px; height: 18px; display: grid; place-items: center; font-size: .65rem; }
+.fchip:hover .x { background: var(--red); color: #fff; }
+.price-filter { border-top: 0; }
+.price-inputs { display: flex; align-items: center; gap: 6px; }
+.price-inputs input { width: 100%; min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; font-size: .86rem; }
+.empty { grid-column: 1 / -1; background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius); padding: 24px 18px; text-align: center; }
+.empty h3 { margin: 0 0 6px; }
+.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 12px; }
+/* Fotos: no se pueden arrastrar ni abrir con clic derecho / pulsacion larga; el clic llega a la tarjeta */
+img { -webkit-user-drag: none; user-drag: none; -webkit-touch-callout: none; }
+.card-img img, .qv-media img, .suggest-row img, .cart-item img, .logo-img { pointer-events: none; user-select: none; -webkit-user-select: none; }

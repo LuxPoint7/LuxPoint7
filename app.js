@@ -58,19 +58,33 @@
   };
 
   /* -------------------------------- estado -------------------------------- */
-  var S = { cat: 'all', q: '', sort: 'rel', sel: {}, shown: PAGE };
+  var NEW_DAYS = 7;   // dias que un producto nuevo lleva la etiqueta "Nuevo"
+  var S = { cat: 'all', q: '', qRaw: '', sort: 'rel', sel: {}, shown: PAGE, min: null, max: null, view: 'all', fuzzy: false };
+  var DEST = {};      // ids destacados (data/destacados.json)
   var products = [];
   var ivSel = {}; // seleccion de cada tarjeta iPhone
 
   function norm(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+  var SINON = { p11: ' perfume perfumes fragancia', orig: ' perfume perfumes fragancia', iphone: ' apple celular telefono', tech: ' accesorio accesorios tecnologia' };
   function hay(p) {
-    return norm([p.name, p.brand, p.model, p.subcatLabel, p.gender, p.linea, p.tipo].join(' ') + (p.variants ? ' ' + p.variants.map(function (v) { return v.color + ' ' + v.gb; }).join(' ') : ''));
+    var g = p.gender === 'mujer' ? ' dama femenino women' : p.gender === 'hombre' ? ' caballero masculino men' : '';
+    return norm([p.name, p.brand, p.model, p.subcatLabel, p.gender, p.linea, p.tipo].join(' ') + g + (SINON[p.cat] || '') + (p.variants ? ' ' + p.variants.map(function (v) { return v.color + ' ' + v.gb; }).join(' ') : ''));
+  }
+  function isNew(p) { return !!p.addedAt && Date.now() - Date.parse(p.addedAt) <= NEW_DAYS * 864e5; }
+  function isDest(p) { return !!DEST[p.id]; }
+  function priceOk(p) {
+    if (S.min == null && S.max == null) return true;
+    var prices = p.variants ? p.variants.map(function (v) { return v.price; }) : [p.price];
+    return prices.some(function (x) { return (S.min == null || x >= S.min) && (S.max == null || x <= S.max); });
   }
 
   function selOf(key) { return S.sel[key] || (S.sel[key] = {}); }
   function activeDefs() { return FILTERS[S.cat] || FILTERS.all; }
 
   function passes(p, skipKey) {
+    if (!priceOk(p)) return false;
+    if (S.view === 'dest' && !isDest(p)) return false;
+    if (S.view === 'nuevo' && !isNew(p)) return false;
     var defs = activeDefs();
     for (var i = 0; i < defs.length; i++) {
       var d = defs[i];
@@ -83,12 +97,58 @@
     return true;
   }
   function inCat(p) { return S.cat === 'all' || p.cat === S.cat; }
-  function matchesQuery(p) {
-    if (!S.q) return true;
-    var h = p._h || (p._h = hay(p));
-    return S.q.split(' ').every(function (t) { return h.indexOf(t) !== -1; });
+  // Busqueda tolerante: sin tildes, por palabras y, si no hay coincidencia exacta, con pequenos errores de escritura
+  function words(p) { return p._w || (p._w = (p._h || (p._h = hay(p))).split(/[^a-z0-9]+/).filter(Boolean)); }
+  function lev(a, b, max) { // distancia de edicion (con transposicion), corta si supera "max"
+    var la = a.length, lb = b.length;
+    if (Math.abs(la - lb) > max) return max + 1;
+    var prev2 = null, prev = [], cur, i, j, best;
+    for (j = 0; j <= lb; j++) prev[j] = j;
+    for (i = 1; i <= la; i++) {
+      cur = [i]; best = i;
+      for (j = 1; j <= lb; j++) {
+        var c = a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1;
+        var v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + c);
+        if (prev2 && i > 1 && j > 1 && a.charAt(i - 1) === b.charAt(j - 2) && a.charAt(i - 2) === b.charAt(j - 1)) v = Math.min(v, prev2[j - 2] + 1);
+        cur[j] = v; if (v < best) best = v;
+      }
+      if (best > max) return max + 1;
+      prev2 = prev; prev = cur;
+    }
+    return prev[lb];
   }
-  function base() { return products.filter(function (p) { return inCat(p) && matchesQuery(p); }); }
+  function tokenScore(p, t, fuzzy) {
+    var ws = words(p), i;
+    for (i = 0; i < ws.length; i++) if (ws[i].indexOf(t) === 0) return 3;
+    if ((p._h || (p._h = hay(p))).indexOf(t) !== -1) return 2;
+    if (fuzzy && t.length >= 4) {
+      var max = t.length >= 8 ? 2 : 1;
+      for (i = 0; i < ws.length; i++) {
+        var w = ws[i];
+        if (lev(t, w, max) <= max || (w.length > t.length && lev(t, w.slice(0, t.length), max) <= max)) return 1;
+      }
+    }
+    return 0;
+  }
+  function search(list) {
+    if (!S.q) { S.fuzzy = false; return list; }
+    var toks = S.q.split(' ');
+    var run = function (fuzzy) {
+      var out = [];
+      list.forEach(function (p) {
+        var sum = 0;
+        for (var i = 0; i < toks.length; i++) { var sc = tokenScore(p, toks[i], fuzzy); if (!sc) return; sum += sc; }
+        p._s = sum; out.push(p);
+      });
+      return out;
+    };
+    var strict = run(false);
+    if (strict.length) { S.fuzzy = false; return strict; }
+    var loose = run(true);
+    S.fuzzy = loose.length > 0;
+    return loose;
+  }
+  function base() { return search(products.filter(inCat)); }
 
   function sorted(list) {
     var a = list.slice();
@@ -96,7 +156,10 @@
     else if (S.sort === 'desc') a.sort(function (x, y) { return y.price - x.price; });
     else if (S.sort === 'az') a.sort(function (x, y) { return x.name.localeCompare(y.name, 'es'); });
     else {
-      a.sort(function (x, y) { return (y.inStock ? 1 : 0) - (x.inStock ? 1 : 0); });
+      a.sort(function (x, y) {
+        return (y.inStock ? 1 : 0) - (x.inStock ? 1 : 0) || (S.q ? (y._s || 0) - (x._s || 0) : 0) ||
+          (isDest(y) ? 1 : 0) - (isDest(x) ? 1 : 0) || (isNew(y) ? 1 : 0) - (isNew(x) ? 1 : 0);
+      });
       if (S.cat === 'all') { // intercala categorias para que "Todo" muestre un poco de cada una
         var buckets = CFG.order.map(function (c) { return a.filter(function (p) { return p.cat === c; }); });
         var out = [];
@@ -124,11 +187,11 @@
   function withBrand(brand, name) { return brand && norm(name).indexOf(norm(brand)) !== 0 ? brand + ' ' + name : name; }
   // Lista que se muestra en cada iPhone. EDÍTALA para que diga exactamente lo que tú revisas.
   var REVISION_IPHONE = [
-    'Verificación física y funcional antes del despacho',
+  'Verificación física y funcional antes del despacho',
   'Registro en video completo del equipo y su empaque protegido',
   'Envío asegurado por Inter Rapidísimo (3 a 6 días hábiles)',
   'Respaldo directo de garantía de 12 meses por fallas internas'
-  ];
+];
   var EMOJI = { p11: '🧴', orig: '🧴', iphone: '📱', tech: '🔌' };
 
   /* ------------------------------- iPhone ---------------------------------- */
@@ -155,6 +218,13 @@
     var v = p.variants.filter(function (x) { return x.gb === s.gb && x.color === s.color && x.estado === s.estado; })
       .sort(function (a, b) { return a.price - b.price; })[0];
     return { s: s, gbs: gbs, colors: colors, estados: estados, v: v };
+  }
+
+  function extraTags(p) {
+    var t = [];
+    if (isDest(p)) t.push(['tag-gold', '⭐ Destacado']);
+    if (isNew(p)) t.push(['tag-blue', 'Nuevo']);
+    return t;
   }
 
   /* ------------------- datos de presentacion de un producto ------------------- */
@@ -192,7 +262,7 @@
     var d = p.cat === 'iphone' ? { name: p.model, brand: p.brand || 'Apple', price: p.price, image: p.image, tags: [['tag-green', '12 meses de garantía']], old: null } : view(p);
     var node = el('article', { class: 'card' + (p.inStock ? '' : ' soldout'), 'data-id': p.id, tabindex: '0', role: 'button', 'aria-label': 'Ver detalle de ' + d.name });
     var tags = el('div', { class: 'card-tags' });
-    d.tags.forEach(function (t) { tags.appendChild(el('span', { class: 'tag ' + t[0], text: t[1] })); });
+    extraTags(p).concat(d.tags).forEach(function (t) { tags.appendChild(el('span', { class: 'tag ' + t[0], text: t[1] })); });
     if (!p.inStock) tags.appendChild(el('span', { class: 'tag tag-red', text: 'Agotado' }));
     node.appendChild(el('div', { class: 'card-img' }, imgNode(d.image, EMOJI[p.cat]), tags));
     var pr = el('div', { class: 'price-row' });
@@ -221,7 +291,7 @@
     var d = view(p);
     qvBody.textContent = '';
     var tags = el('div', { class: 'card-tags' });
-    d.tags.forEach(function (t) { tags.appendChild(el('span', { class: 'tag ' + t[0], text: t[1] })); });
+    extraTags(p).concat(d.tags).forEach(function (t) { tags.appendChild(el('span', { class: 'tag ' + t[0], text: t[1] })); });
     if (p.cat === 'iphone' && d.state.v) tags.appendChild(el('span', { class: 'tag' + (d.state.v.estado === 'Nuevo' ? ' tag-gold' : ''), text: d.state.v.estado }));
     if (!d.inStock) tags.appendChild(el('span', { class: 'tag tag-red', text: 'Agotado' }));
     var media = el('div', { class: 'qv-media' }, imgNode(d.image, EMOJI[p.cat], true), tags);
@@ -319,15 +389,119 @@
 
   /* ------------------------------ render lista ------------------------------ */
   function renderGrid() {
-    var list = sorted(base().filter(function (p) { return passes(p); }));
+    var pool = base();
+    var list = sorted(pool.filter(function (p) { return passes(p); }));
     var grid = document.getElementById('grid');
     grid.textContent = '';
     var frag = document.createDocumentFragment();
     list.slice(0, S.shown).forEach(function (p) { frag.appendChild(card(p)); });
     grid.appendChild(frag);
-    if (!list.length) grid.appendChild(el('p', { class: 'muted', text: 'No encontramos productos con esos filtros. Prueba quitando alguno o cambiando la búsqueda.' }));
-    document.getElementById('result-count').textContent = list.length + (list.length === 1 ? ' producto' : ' productos');
+    if (!list.length) grid.appendChild(emptyBox());
+    document.getElementById('result-count').textContent = list.length + (list.length === 1 ? ' producto' : ' productos') +
+      (S.fuzzy && list.length ? ' · resultados parecidos a “' + S.qRaw + '”' : '');
     document.getElementById('more').hidden = list.length <= S.shown;
+    renderQuickViews(pool);
+    renderActive();
+  }
+
+  // Sin resultados: sugerencias + boton para pedirlo por WhatsApp
+  function emptyBox() {
+    var cat = CATS.filter(function (c) { return c.id === S.cat; })[0];
+    var msg = S.qRaw
+      ? 'Hola LuxPoint7, busqué “' + S.qRaw + '” en la tienda' + (S.cat !== 'all' ? ' (' + cat.nav + ')' : '') + ' y no lo encontré. ¿Me ayudan a conseguirlo?'
+      : 'Hola LuxPoint7, estoy buscando algo en ' + cat.nav + ' con los filtros que usé y no encontré opciones. ¿Me ayudan?';
+    return el('div', { class: 'empty' },
+      el('h3', { text: 'No encontramos productos con esa búsqueda' }),
+      el('p', { class: 'muted', text: 'Revisa la ortografía, quita algún filtro o pídenos lo que buscas: lo conseguimos por ti.' }),
+      el('div', { class: 'empty-actions' },
+        el('button', { type: 'button', class: 'btn btn-wa', onclick: function () { window.LPCart.ask(msg); } }, '💬 ¿No lo encuentras? Pídelo por WhatsApp'),
+        el('button', { type: 'button', class: 'btn btn-outline', onclick: clearAll }, 'Quitar filtros y búsqueda')));
+  }
+
+  // Atajos: Todos / Destacados / Novedades (con su cantidad en la categoria actual)
+  function renderQuickViews(pool) {
+    var box = document.getElementById('quick-views');
+    if (!box) {
+      box = el('div', { class: 'quick-views', id: 'quick-views', role: 'group', 'aria-label': 'Atajos' });
+      var tb = document.querySelector('.toolbar');
+      tb.parentNode.insertBefore(box, tb);
+    }
+    var notView = function (p) { var v = S.view; S.view = 'all'; var ok = passes(p); S.view = v; return ok; };
+    var cand = pool.filter(notView);
+    var nDest = cand.filter(isDest).length, nNew = cand.filter(isNew).length;
+    box.textContent = '';
+    var mk = function (id, label) {
+      var b = el('button', { type: 'button', class: 'qv-chip', text: label, 'aria-pressed': S.view === id ? 'true' : 'false' });
+      b.addEventListener('click', function () { S.view = S.view === id && id !== 'all' ? 'all' : id; S.shown = PAGE; renderFilters(); renderGrid(); });
+      box.appendChild(b);
+    };
+    mk('all', 'Todos');
+    if (nDest || S.view === 'dest') mk('dest', '⭐ Destacados (' + nDest + ')');
+    if (nNew || S.view === 'nuevo') mk('nuevo', '🆕 Novedades (' + nNew + ')');
+    box.hidden = box.childNodes.length < 2;
+  }
+
+  // Etiquetas de filtros activos (clic para quitar cada una)
+  function renderActive() {
+    var box = document.getElementById('active-chips');
+    if (!box) {
+      box = el('div', { class: 'active-chips', id: 'active-chips', 'aria-label': 'Filtros activos' });
+      var g = document.getElementById('grid');
+      g.parentNode.insertBefore(box, g);
+    }
+    box.textContent = '';
+    var chips = [];
+    if (S.qRaw) chips.push(['Búsqueda: ' + S.qRaw, function () { document.getElementById('q').value = ''; S.q = ''; S.qRaw = ''; }]);
+    if (S.min != null || S.max != null) {
+      chips.push(['Precio: ' + (S.min != null ? fmt(S.min) : 'cualquiera') + ' – ' + (S.max != null ? fmt(S.max) : 'cualquiera'), function () { S.min = null; S.max = null; syncPriceUI(); }]);
+    }
+    if (S.view !== 'all') chips.push([S.view === 'dest' ? '⭐ Destacados' : '🆕 Novedades', function () { S.view = 'all'; }]);
+    activeDefs().forEach(function (d) {
+      Object.keys(selOf(d.key)).forEach(function (v) {
+        chips.push([d.label + ': ' + (d.fmt ? d.fmt(v) : v), function () { delete selOf(d.key)[v]; ivSel = {}; }]);
+      });
+    });
+    chips.forEach(function (c) {
+      var b = el('button', { type: 'button', class: 'fchip', 'aria-label': 'Quitar ' + c[0] }, el('span', { text: c[0] }), el('span', { class: 'x', 'aria-hidden': 'true', text: '✕' }));
+      b.addEventListener('click', function () { c[1](); S.shown = PAGE; renderFilters(); renderGrid(); });
+      box.appendChild(b);
+    });
+    if (chips.length > 1) {
+      var all = el('button', { type: 'button', class: 'btn btn-link', text: 'Quitar todos' });
+      all.addEventListener('click', clearAll);
+      box.appendChild(all);
+    }
+    box.hidden = !chips.length;
+  }
+
+  function clearAll() {
+    S.sel = {}; S.min = null; S.max = null; S.view = 'all'; S.q = ''; S.qRaw = ''; S.shown = PAGE; ivSel = {};
+    document.getElementById('q').value = '';
+    syncPriceUI(); renderFilters(); renderGrid();
+  }
+
+  // Filtro de precio (minimo / maximo), fuera de la lista de filtros para no perder el foco al escribir
+  function buildPriceUI() {
+    if (document.getElementById('pf-min')) return;
+    var mk = function (id, ph) { return el('input', { id: id, type: 'number', inputmode: 'numeric', min: '0', step: '1000', placeholder: ph, 'aria-label': ph }); };
+    var mn = mk('pf-min', 'Mínimo'), mx = mk('pf-max', 'Máximo'), t;
+    var apply = function () {
+      clearTimeout(t);
+      t = setTimeout(function () {
+        var a = mn.value === '' ? null : Math.max(0, Number(mn.value)), b = mx.value === '' ? null : Math.max(0, Number(mx.value));
+        if (a != null && b != null && a > b) { var x = a; a = b; b = x; }
+        S.min = a; S.max = b; S.shown = PAGE; renderFilters(); renderGrid();
+      }, 350);
+    };
+    mn.addEventListener('input', apply); mx.addEventListener('input', apply);
+    var box = el('div', { class: 'fgroup price-filter' }, el('h3', { text: 'Precio (COP)' }), el('div', { class: 'price-inputs' }, mn, el('span', { text: '–' }), mx));
+    var body = document.getElementById('filters-body');
+    body.parentNode.insertBefore(box, body);
+  }
+  function syncPriceUI() {
+    var mn = document.getElementById('pf-min'), mx = document.getElementById('pf-max');
+    if (mn) mn.value = S.min == null ? '' : S.min;
+    if (mx) mx.value = S.max == null ? '' : S.max;
   }
 
   function renderFilters() {
@@ -380,7 +554,7 @@
   }
 
   function setCat(id) {
-    S.cat = id; S.sel = {}; S.shown = PAGE; ivSel = {};
+    S.cat = id; S.sel = {}; S.shown = PAGE; ivSel = {}; S.min = null; S.max = null; S.view = 'all'; syncPriceUI();
     if (!(qv && qv.open)) { try { history.replaceState(null, '', id === 'all' ? location.pathname : '#c=' + id); } catch (e) { /* ignore */ } }
     renderNav(); renderInfo(); renderFilters(); renderGrid();
     document.getElementById('filters').classList.remove('open');
@@ -423,6 +597,15 @@
         var pm = /#p=([^&]+)/.exec(location.hash), hashP = pm ? pm[0] : null;
         setCat(start);
         if (hashP) { try { history.replaceState(null, '', hashP); } catch (e) { /* ignore */ } openFromHash(); }
+        // Destacados: data/destacados.json -> { "ids": ["p11-...", "iphone-..."] } (opcional)
+        fetch('data/destacados.json', { cache: 'no-cache' })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) {
+            if (!j || !Array.isArray(j.ids) || !j.ids.length) return;
+            j.ids.forEach(function (id) { DEST[String(id)] = true; });
+            renderFilters(); renderGrid();
+          })
+          .catch(function () { /* sin destacados */ });
       })
       .catch(function () {
         document.getElementById('grid').appendChild(el('p', { class: 'muted', text: 'No pudimos cargar el catálogo en este momento. Recarga la página en unos minutos.' }));
@@ -434,12 +617,12 @@
     var t;
     q.addEventListener('input', function () {
       clearTimeout(t);
-      t = setTimeout(function () { S.q = norm(q.value).trim().replace(/\s+/g, ' '); S.shown = PAGE; renderFilters(); renderGrid(); }, 150);
+      t = setTimeout(function () { S.qRaw = q.value.trim().replace(/\s+/g, ' ').slice(0, 80); S.q = norm(S.qRaw); S.shown = PAGE; renderFilters(); renderGrid(); }, 150);
     });
     document.getElementById('search-form').addEventListener('submit', function (e) { e.preventDefault(); });
     document.getElementById('sort').addEventListener('change', function (e) { S.sort = e.target.value; S.shown = PAGE; renderGrid(); });
     document.getElementById('more').addEventListener('click', function () { S.shown += PAGE; renderGrid(); });
-    document.getElementById('filters-clear').addEventListener('click', function () { S.sel = {}; S.shown = PAGE; ivSel = {}; renderFilters(); renderGrid(); });
+    document.getElementById('filters-clear').addEventListener('click', function () { S.sel = {}; S.min = null; S.max = null; S.view = 'all'; S.shown = PAGE; ivSel = {}; syncPriceUI(); renderFilters(); renderGrid(); });
     document.getElementById('filters-toggle').addEventListener('click', function () { document.getElementById('filters').classList.toggle('open'); });
     var close = el('button', { type: 'button', class: 'icon-btn filters-close', 'aria-label': 'Cerrar filtros' }, '✕');
     close.addEventListener('click', function () { document.getElementById('filters').classList.remove('open'); });
@@ -449,6 +632,10 @@
     qv.addEventListener('click', function (e) { if (e.target === qv) qv.close(); }); // clic fuera de la ventana
     qv.addEventListener('close', function () { qvProduct = null; restoreHash(); });
     window.addEventListener('hashchange', function () { if (!openFromHash() && qv.open && !/#p=/.test(location.hash)) qv.close(); });
+    buildPriceUI();
+    // Proteccion basica de fotos: sin menu de clic derecho / pulsacion larga y sin arrastrar. Es solo un freno, no una garantia.
+    document.addEventListener('contextmenu', function (e) { if (e.target && e.target.tagName === 'IMG') e.preventDefault(); });
+    document.addEventListener('dragstart', function (e) { if (e.target && e.target.tagName === 'IMG') e.preventDefault(); });
     renderNav(); renderInfo();
     load();
   }

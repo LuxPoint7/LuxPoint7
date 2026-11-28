@@ -251,7 +251,7 @@ function asignarFotosP11(products) {
 /**
  * - Optimiza tus fotos de img/perfumes/ (jpg/png) creando una version .webp de max. 900 px al lado de cada original.
  *   Los originales NO se tocan; la tienda usa el .webp y el despliegue deja de publicar el original.
- * - Descarga las fotos de los productos de iPhone e Innovacion a img/p/<id>.webp, para que la tienda las sirva desde
+ * - Descarga las fotos de los productos de Perfumeria Original, iPhone e Innovacion a img/p/<id>.webp, para que la tienda las sirva desde
  *   tu propio sitio (no depende de los proveedores y no expone sus direcciones). Si el archivo ya existe, no se vuelve a pedir.
  * Usa la libreria "sharp" si esta instalada (el workflow la instala). Sin ella, las fotos descargadas se guardan tal cual
  * y no se optimiza nada.
@@ -338,7 +338,7 @@ async function localizarFotos(products) {
     });
   };
   for (const p of products) {
-    if (p.cat !== 'iphone' && p.cat !== 'tech') continue;
+    if (p.cat !== 'iphone' && p.cat !== 'tech' && p.cat !== 'orig') continue;
     resolver(p, p.id);
     for (const v of p.variants || []) resolver(v, v.id);
   }
@@ -670,8 +670,21 @@ async function main() {
 
   if (!DRY) {
     const l = await localizarFotos(result);
-    console.log(`> fotos iPhone/Innovacion en tu sitio: ${l.descargadas} descargadas, ${l.cache} ya estaban, ${l.fallidas} sin foto (fallaron), ${l.huerfanas} archivos viejos borrados`);
+    console.log(`> fotos de proveedores guardadas en tu sitio (img/p): ${l.descargadas} descargadas, ${l.cache} ya estaban, ${l.fallidas} sin foto (fallaron), ${l.huerfanas} archivos viejos borrados`);
   }
+  // Novedades: fecha en que el robot vio por primera vez cada producto (la tienda muestra la etiqueta "Nuevo" unos dias)
+  const prevMap = new Map(previous.products.map((x) => [x.id, x]));
+  for (const x of result) {
+    const prev = prevMap.get(x.id);
+    if (prev) { if (prev.addedAt) x.addedAt = prev.addedAt; else delete x.addedAt; } // ya existia: conserva su fecha (o ninguna)
+    else if (previous.products.length) x.addedAt = now;                               // producto nuevo
+    else delete x.addedAt;                                                            // primera sincronizacion: nada es "nuevo"
+  }
+  // Red de seguridad de privacidad: ninguna URL externa de foto llega al JSON publico
+  let externas = 0;
+  const quitar = (o) => { if (o.image && /^https?:/i.test(o.image)) { delete o.image; externas++; } };
+  for (const x of result) { quitar(x); for (const v of x.variants || []) quitar(v); }
+  if (externas) console.log(`> aviso: ${externas} fotos con enlace externo se quitaron del JSON publico (sin foto hasta la proxima descarga)`);
   result.sort((a, b) => a.cat.localeCompare(b.cat) || a.name.localeCompare(b.name, 'es'));
   const payload = { updatedAt: now, demo: false, meta, products: result };
   const anyOk = Object.values(meta.providers).some((x) => x.ok);

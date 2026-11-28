@@ -91,6 +91,13 @@ jobs:
           touch _site/.nojekyll
           test -f _site/index.html && test -f _site/data/products.json && test -f _site/data/config.json
           echo "Archivos publicados: $(find _site -type f | wc -l)"
+      - name: Auditar privacidad (si aparece un proveedor, NO se publica)
+        run: node scripts/auditar-privacidad.js .
+        env:
+          URL_PERF_11: ${{ secrets.URL_PERF_11 }}
+          URL_PERF_ORIG: ${{ secrets.URL_PERF_ORIG }}
+          URL_IPHONE: ${{ secrets.URL_IPHONE }}
+          URL_INNOVACION: ${{ secrets.URL_INNOVACION }}
       - uses: actions/configure-pages@v5
       - name: Subir artefacto de Pages
         uses: actions/upload-pages-artifact@v3
